@@ -41,6 +41,10 @@ BEGIN
         observations NVARCHAR(500) NULL,
         status NVARCHAR(20) NOT NULL
             CONSTRAINT DF_OperationCosts_status DEFAULT (N'PENDING'),
+        costResponsibility NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_OperationCosts_costResponsibility DEFAULT (N'COMPANY'),
+        customerPaymentStatus NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_OperationCosts_customerPaymentStatus DEFAULT (N'UNPAID'),
         createdBy INT NULL,
         updatedBy INT NULL,
         createdAt DATETIME2(7) NOT NULL
@@ -53,7 +57,9 @@ BEGIN
         CONSTRAINT FK_OperationCosts_QuotationCharges FOREIGN KEY (quotationChargeId) REFERENCES dbo.QuotationCharges(id),
         CONSTRAINT FK_OperationCosts_CreatedBy FOREIGN KEY (createdBy) REFERENCES dbo.Users(id),
         CONSTRAINT FK_OperationCosts_UpdatedBy FOREIGN KEY (updatedBy) REFERENCES dbo.Users(id),
-        CONSTRAINT CK_OperationCosts_status CHECK (status IN (N'PENDING', N'APPROVED', N'PAID', N'CANCELLED'))
+        CONSTRAINT CK_OperationCosts_status CHECK (status IN (N'PENDING', N'APPROVED', N'PAID', N'CANCELLED')),
+        CONSTRAINT CK_OperationCosts_costResponsibility CHECK (costResponsibility IN (N'COMPANY', N'CLIENT')),
+        CONSTRAINT CK_OperationCosts_customerPaymentStatus CHECK (customerPaymentStatus IN (N'UNPAID', N'PAID'))
     );
 END
 GO
@@ -75,6 +81,36 @@ GO
 IF COL_LENGTH(N'dbo.OperationCosts', N'chargeSection') IS NULL
 BEGIN
     ALTER TABLE dbo.OperationCosts ADD chargeSection NVARCHAR(50) NULL;
+END
+GO
+
+IF COL_LENGTH(N'dbo.OperationCosts', N'costResponsibility') IS NULL
+BEGIN
+    ALTER TABLE dbo.OperationCosts
+        ADD costResponsibility NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_OperationCosts_costResponsibility DEFAULT (N'COMPANY');
+END
+GO
+
+IF COL_LENGTH(N'dbo.OperationCosts', N'customerPaymentStatus') IS NULL
+BEGIN
+    ALTER TABLE dbo.OperationCosts
+        ADD customerPaymentStatus NVARCHAR(20) NOT NULL
+            CONSTRAINT DF_OperationCosts_customerPaymentStatus DEFAULT (N'UNPAID');
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(N'dbo.OperationCosts') AND name = N'CK_OperationCosts_costResponsibility')
+BEGIN
+    ALTER TABLE dbo.OperationCosts
+        ADD CONSTRAINT CK_OperationCosts_costResponsibility CHECK (costResponsibility IN (N'COMPANY', N'CLIENT'));
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(N'dbo.OperationCosts') AND name = N'CK_OperationCosts_customerPaymentStatus')
+BEGIN
+    ALTER TABLE dbo.OperationCosts
+        ADD CONSTRAINT CK_OperationCosts_customerPaymentStatus CHECK (customerPaymentStatus IN (N'UNPAID', N'PAID'));
 END
 GO
 

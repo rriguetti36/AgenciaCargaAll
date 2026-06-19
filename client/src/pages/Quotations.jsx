@@ -104,6 +104,58 @@ const formatMeasure = (value, unitCode, decimals = 2) => {
 }
 const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
 const splitLines = (value) => String(value || '').split('\n').map((line) => line.trim()).filter(Boolean)
+const normalizeText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+function findPeruDefaults(masterData) {
+  const peru = masterData.countries.find((country) => (
+    String(country.code || '').toUpperCase() === 'PE'
+    || normalizeText(country.name) === 'peru'
+  ))
+  const callao = masterData.ports.find((port) => (
+    peru
+    && String(port.countryId) === String(peru.id)
+    && (normalizeText(port.name).includes('callao') || String(port.code || '').toUpperCase() === 'PECLL')
+  ))
+
+  return {
+    countryId: peru ? String(peru.id) : '',
+    portId: callao ? String(callao.id) : '',
+  }
+}
+
+function findCatalogId(items, names = []) {
+  const normalizedNames = names.map(normalizeText)
+  const item = items.find((entry) => normalizedNames.includes(normalizeText(entry.name)))
+  return item ? String(item.id) : ''
+}
+
+function buildDefaultForm(masterData, operationType = 'importacion') {
+  const defaults = findPeruDefaults(masterData)
+  const next = {
+    ...emptyForm,
+    operationType,
+    transportMode: 'maritima',
+    operationCatalogId: findCatalogId(masterData.operations, [operationType]),
+    modalityCatalogId: findCatalogId(masterData.modalities, ['maritima']),
+    serviceCatalogId: findCatalogId(masterData.services, ['puerto a puerto']) || (masterData.services[0]?.id ? String(masterData.services[0].id) : ''),
+  }
+
+  if (!defaults.countryId) return next
+
+  if (operationType === 'exportacion') {
+    return {
+      ...next,
+      originCountryId: defaults.countryId,
+      originPortId: defaults.portId,
+    }
+  }
+
+  return {
+    ...next,
+    destinationCountryId: defaults.countryId,
+    destinationPortId: defaults.portId,
+  }
+}
 
 export default function Quotations() {
   const [customers, setCustomers] = useState([])
@@ -211,7 +263,7 @@ export default function Quotations() {
     ])
     setCustomers(customersRes.data)
     setQuotations(quotationsRes.data)
-    setMaster({
+    const nextMaster = {
       operations: operationsRes.data,
       modalities: modalitiesRes.data,
       services: servicesRes.data,
@@ -225,7 +277,11 @@ export default function Quotations() {
       customsService: customsServiceRes.data,
       localTransport: localTransportRes.data,
       units: unitsRes.data,
-    })
+    }
+    setMaster(nextMaster)
+    if (!editingQuotationId && viewMode !== 'form') {
+      setForm(buildDefaultForm(nextMaster))
+    }
   }
 
   useEffect(() => {
@@ -235,6 +291,81 @@ export default function Quotations() {
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm((prev) => {
+      if (name === 'operationCatalogId') {
+        const selectedOperation = master.operations.find((item) => String(item.id) === String(value))
+        const selectedName = normalizeText(selectedOperation?.name)
+        const currentDefaults = findPeruDefaults(master)
+        const baseUpdate = {
+          ...prev,
+          operationCatalogId: value,
+          modalityCatalogId: prev.modalityCatalogId || findCatalogId(master.modalities, ['maritima']),
+          serviceCatalogId: prev.serviceCatalogId || findCatalogId(master.services, ['puerto a puerto']) || (master.services[0]?.id ? String(master.services[0].id) : ''),
+          transportMode: 'maritima',
+        }
+
+        if (selectedName.includes('importacion') || selectedName.includes('import')) {
+          return {
+            ...baseUpdate,
+            operationType: 'importacion',
+            destinationCountryId: currentDefaults.countryId || prev.destinationCountryId,
+            destinationPortId: currentDefaults.portId || prev.destinationPortId,
+          }
+        }
+
+        if (selectedName.includes('exportacion') || selectedName.includes('export')) {
+          return {
+            ...baseUpdate,
+            operationType: 'exportacion',
+            originCountryId: currentDefaults.countryId || prev.originCountryId,
+            originPortId: currentDefaults.portId || prev.originPortId,
+          }
+        }
+
+        return baseUpdate
+      }
+      if (name === 'operationType') {
+        const currentDefaults = findPeruDefaults(master)
+        const hasDefaultDestination = currentDefaults.countryId
+          && String(prev.destinationCountryId) === currentDefaults.countryId
+          && (!currentDefaults.portId || String(prev.destinationPortId) === currentDefaults.portId)
+          && !prev.originCountryId
+          && !prev.originPortId
+        const hasDefaultOrigin = currentDefaults.countryId
+          && String(prev.originCountryId) === currentDefaults.countryId
+          && (!currentDefaults.portId || String(prev.originPortId) === currentDefaults.portId)
+          && !prev.destinationCountryId
+          && !prev.destinationPortId
+
+        if (value === 'exportacion' && hasDefaultDestination) {
+          return {
+            ...prev,
+            operationType: value,
+            operationCatalogId: findCatalogId(master.operations, ['exportacion']),
+            transportMode: 'maritima',
+            modalityCatalogId: prev.modalityCatalogId || findCatalogId(master.modalities, ['maritima']),
+            serviceCatalogId: prev.serviceCatalogId || findCatalogId(master.services, ['puerto a puerto']) || (master.services[0]?.id ? String(master.services[0].id) : ''),
+            originCountryId: currentDefaults.countryId,
+            originPortId: currentDefaults.portId,
+            destinationCountryId: '',
+            destinationPortId: '',
+          }
+        }
+        if (value === 'importacion' && hasDefaultOrigin) {
+          return {
+            ...prev,
+            operationType: value,
+            operationCatalogId: findCatalogId(master.operations, ['importacion']),
+            transportMode: 'maritima',
+            modalityCatalogId: prev.modalityCatalogId || findCatalogId(master.modalities, ['maritima']),
+            serviceCatalogId: prev.serviceCatalogId || findCatalogId(master.services, ['puerto a puerto']) || (master.services[0]?.id ? String(master.services[0].id) : ''),
+            originCountryId: '',
+            originPortId: '',
+            destinationCountryId: currentDefaults.countryId,
+            destinationPortId: currentDefaults.portId,
+          }
+        }
+        return { ...prev, operationType: value }
+      }
       if (name === 'originCountryId') return { ...prev, originCountryId: value, originPortId: '' }
       if (name === 'destinationCountryId') return { ...prev, destinationCountryId: value, destinationPortId: '' }
       return { ...prev, [name]: value }
@@ -372,14 +503,14 @@ export default function Quotations() {
   })
 
   const resetForm = () => {
-    setForm(emptyForm)
+    setForm(buildDefaultForm(master))
     setEditingQuotationId(null)
     setEditingSection('flete_internacional')
     setViewMode('list')
   }
 
   const startNewQuotation = () => {
-    setForm(emptyForm)
+    setForm(buildDefaultForm(master))
     setEditingQuotationId(null)
     setEditingSection('flete_internacional')
     setViewMode('form')
@@ -1096,7 +1227,7 @@ export default function Quotations() {
                         icon={<ViewIcon />}
                         onClick={() => navigate(`/operations/${quotation.operationId}`)}
                       />
-                    ) : quotation.status === 'aceptada' && (
+                    ) : !quotation.operationId && quotation.status === 'aceptada' && (
                       <ActionButton size="sm" colorScheme="teal" label="Convertir en operacion" icon={<CheckCircleIcon />} onClick={() => convertToOperation(quotation)} />
                     )}
                   </HStack>

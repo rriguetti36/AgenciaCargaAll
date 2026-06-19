@@ -10,6 +10,7 @@ const quotationRoutes = require('./routes/quotationRoutes');
 const operationRoutes = require('./routes/operationRoutes');
 const masterDataRoutes = require('./routes/masterDataRoutes');
 const saleRoutes = require('./routes/saleRoutes');
+const managementReportRoutes = require('./routes/managementReportRoutes');
 
 // Ejecutar migraciones
 migrateAddRoleColumn();
@@ -27,6 +28,7 @@ app.use('/api/quotations', quotationRoutes);
 app.use('/api/operations', operationRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/master-data', masterDataRoutes);
+app.use('/api/management-reports', managementReportRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'API Express + SQL Server Express funcionando' });

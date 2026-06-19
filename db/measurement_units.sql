@@ -36,7 +36,11 @@ IF COL_LENGTH(N'dbo.Quotations', N'quantity') IS NULL ALTER TABLE dbo.Quotations
 GO
 IF COL_LENGTH(N'dbo.Quotations', N'quantityUnitId') IS NULL ALTER TABLE dbo.Quotations ADD quantityUnitId INT NULL;
 GO
+IF COL_LENGTH(N'dbo.Quotations', N'grossWeight') IS NULL ALTER TABLE dbo.Quotations ADD grossWeight DECIMAL(18,3) NULL;
+GO
 IF COL_LENGTH(N'dbo.Quotations', N'weightUnitId') IS NULL ALTER TABLE dbo.Quotations ADD weightUnitId INT NULL;
+GO
+IF COL_LENGTH(N'dbo.Quotations', N'volume') IS NULL ALTER TABLE dbo.Quotations ADD volume DECIMAL(18,3) NULL;
 GO
 IF COL_LENGTH(N'dbo.Quotations', N'volumeUnitId') IS NULL ALTER TABLE dbo.Quotations ADD volumeUnitId INT NULL;
 GO

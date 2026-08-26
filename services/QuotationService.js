@@ -58,7 +58,7 @@ class QuotationService {
       quotationNumber: data.quotationNumber || buildNumber('COT'),
       status: data.status || 'solicitada_pricing',
       createdBy: user?.id || null,
-      charges: PRICING_ROLES.includes(user?.role) ? (data.charges || []) : [],
+      charges: (PRICING_ROLES.includes(user?.role) || COMMERCIAL_ROLES.includes(user?.role)) ? (data.charges || []) : [],
     });
   }
 
@@ -66,6 +66,7 @@ class QuotationService {
     const quotation = await this.getById(id, user);
     const isPricing = PRICING_ROLES.includes(user?.role);
     const isOwner = quotation.createdBy === user?.id;
+    const canUpdateRequestDetails = isPricing || (isOwner && quotation.status === 'solicitada_pricing');
     if (!isPricing && !isOwner) {
       const error = new Error('Solo el comercial creador o Pricing pueden editar esta cotizacion');
       error.status = 403;
@@ -91,7 +92,7 @@ class QuotationService {
       origin: data.origin || 'Origen pendiente',
       destination: data.destination || 'Destino pendiente',
       status: quotation.status,
-      charges: isPricing ? (data.charges || []) : (quotation.charges || []),
+      charges: canUpdateRequestDetails ? (data.charges || []) : (quotation.charges || []),
     });
     const operation = await OperationModel.findByQuotationId(id);
     if (operation) {

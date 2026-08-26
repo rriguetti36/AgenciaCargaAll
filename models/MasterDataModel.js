@@ -16,6 +16,11 @@ const tableMap = {
     fields: ['name', 'estado'],
     select: 'SELECT id, name, estado FROM dbo.ServiceCatalog ORDER BY name',
   },
+  commodities: {
+    table: 'dbo.CommodityCatalog',
+    fields: ['name', 'estado'],
+    select: 'SELECT id, name, estado FROM dbo.CommodityCatalog ORDER BY name',
+  },
   countries: {
     table: 'dbo.Countries',
     fields: ['name', 'code', 'estado'],

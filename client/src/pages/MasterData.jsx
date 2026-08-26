@@ -33,6 +33,7 @@ const catalogs = [
   { type: 'operations', label: 'Operacion', fields: ['name'] },
   { type: 'modalities', label: 'Modalidad', fields: ['name'] },
   { type: 'services', label: 'Servicio', fields: ['name'] },
+  { type: 'commodities', label: 'Mercaderias', fields: ['name'] },
   { type: 'countries', label: 'Paises', fields: ['name', 'code'] },
   { type: 'ports', label: 'Puertos', fields: ['countryId', 'name', 'code', 'portType'] },
   { type: 'conditions', label: 'Condiciones comerciales', fields: ['conditionType', 'description'] },
@@ -153,6 +154,17 @@ export default function MasterData() {
           <NumberInput value={form[field]} min={0} onChange={(value) => updateForm(catalog.type, field, value)}>
             <NumberInputField />
           </NumberInput>
+        </FormControl>
+      )
+    }
+    if (field === 'currency') {
+      return (
+        <FormControl key={field}>
+          <FormLabel>Moneda</FormLabel>
+          <Select value={form[field]} onChange={(e) => updateForm(catalog.type, field, e.target.value)}>
+            <option value="USD">USD</option>
+            <option value="PEN">PEN</option>
+          </Select>
         </FormControl>
       )
     }

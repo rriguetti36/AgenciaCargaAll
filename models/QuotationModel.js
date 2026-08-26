@@ -22,6 +22,8 @@ class QuotationModel {
         mc.name AS modalityName,
         q.serviceCatalogId,
         sc.name AS serviceName,
+        q.commodityCatalogId,
+        cc.name AS commodityName,
         q.origin,
         q.originCountryId,
         oco.name AS originCountryName,
@@ -32,7 +34,7 @@ class QuotationModel {
         dco.name AS destinationCountryName,
         q.destinationPortId,
         dp.name AS destinationPortName,
-        q.commodity,
+        COALESCE(cc.name, q.commodity) AS commodity,
         q.quantity,
         q.quantityUnitId,
         quantityUnit.code AS quantityUnitCode,
@@ -47,6 +49,7 @@ class QuotationModel {
         volumeUnit.name AS volumeUnitName,
         q.incoterm,
         q.transitTime,
+        q.frequency,
         q.currency,
         q.profitMargin,
         q.status,
@@ -61,9 +64,9 @@ class QuotationModel {
         q.updatedAt,
         opx.id AS operationId,
         opx.operationNumber,
-        COALESCE(SUM(ch.costAmount), 0) AS totalCost,
-        COALESCE(SUM(ch.saleAmount), 0) AS totalSale,
-        COALESCE(SUM(ch.saleAmount - ch.costAmount), 0) AS estimatedProfit
+        COALESCE(SUM(ch.costAmount * COALESCE(ch.quantity, 1)), 0) AS totalCost,
+        COALESCE(SUM((ch.saleAmount * COALESCE(ch.quantity, 1)) + COALESCE(ch.igvAmount, 0)), 0) AS totalSale,
+        COALESCE(SUM((ch.saleAmount - ch.costAmount) * COALESCE(ch.quantity, 1)), 0) AS estimatedProfit
       FROM dbo.Quotations AS q
       INNER JOIN dbo.Customers AS c ON c.id = q.customerId
       LEFT JOIN dbo.Users AS creator ON creator.id = q.createdBy
@@ -71,6 +74,7 @@ class QuotationModel {
       LEFT JOIN dbo.OperationCatalog AS oc ON oc.id = q.operationCatalogId
       LEFT JOIN dbo.ModalityCatalog AS mc ON mc.id = q.modalityCatalogId
       LEFT JOIN dbo.ServiceCatalog AS sc ON sc.id = q.serviceCatalogId
+      LEFT JOIN dbo.CommodityCatalog AS cc ON cc.id = q.commodityCatalogId
       LEFT JOIN dbo.Countries AS oco ON oco.id = q.originCountryId
       LEFT JOIN dbo.Ports AS op ON op.id = q.originPortId
       LEFT JOIN dbo.Countries AS dco ON dco.id = q.destinationCountryId
@@ -83,11 +87,12 @@ class QuotationModel {
       WHERE (@canSeeAll = 1 OR q.createdBy = @createdBy)
       GROUP BY q.id, q.quotationNumber, q.customerId, c.companyName, q.operationType, q.transportMode,
                q.operationCatalogId, oc.name, q.modalityCatalogId, mc.name, q.serviceCatalogId, sc.name,
+               q.commodityCatalogId, cc.name,
                q.origin, q.originCountryId, oco.name, q.originPortId, op.name,
                q.destination, q.destinationCountryId, dco.name, q.destinationPortId, dp.name,
                q.commodity, q.quantity, q.quantityUnitId, quantityUnit.code, quantityUnit.name,
                q.grossWeight, q.weightUnitId, weightUnit.code, weightUnit.name,
-               q.volume, q.volumeUnitId, volumeUnit.code, volumeUnit.name, q.incoterm, q.transitTime,
+               q.volume, q.volumeUnitId, volumeUnit.code, volumeUnit.name, q.incoterm, q.transitTime, q.frequency,
                q.currency, q.profitMargin, q.status, q.createdBy, creator.name,
                q.pricingUserId, pricing.name, q.pricingSubmittedAt, q.sentToCustomerAt, q.customerApprovedAt,
                q.createdAt, q.updatedAt,
@@ -106,7 +111,13 @@ class QuotationModel {
         SELECT
           q.*,
           c.companyName AS customerName,
+          cc.name AS commodityName,
+          oco.name AS originCountryName,
+          op.name AS originPortName,
+          dco.name AS destinationCountryName,
+          dp.name AS destinationPortName,
           creator.name AS createdByName,
+          creator.phone AS createdByPhone,
           pricing.name AS pricingUserName,
           quantityUnit.code AS quantityUnitCode,
           quantityUnit.name AS quantityUnitName,
@@ -118,6 +129,11 @@ class QuotationModel {
         INNER JOIN dbo.Customers AS c ON c.id = q.customerId
         LEFT JOIN dbo.Users AS creator ON creator.id = q.createdBy
         LEFT JOIN dbo.Users AS pricing ON pricing.id = q.pricingUserId
+        LEFT JOIN dbo.CommodityCatalog AS cc ON cc.id = q.commodityCatalogId
+        LEFT JOIN dbo.Countries AS oco ON oco.id = q.originCountryId
+        LEFT JOIN dbo.Ports AS op ON op.id = q.originPortId
+        LEFT JOIN dbo.Countries AS dco ON dco.id = q.destinationCountryId
+        LEFT JOIN dbo.Ports AS dp ON dp.id = q.destinationPortId
         LEFT JOIN dbo.MeasurementUnits AS quantityUnit ON quantityUnit.id = q.quantityUnitId
         LEFT JOIN dbo.MeasurementUnits AS weightUnit ON weightUnit.id = q.weightUnitId
         LEFT JOIN dbo.MeasurementUnits AS volumeUnit ON volumeUnit.id = q.volumeUnitId
@@ -150,6 +166,7 @@ class QuotationModel {
         .input('operationCatalogId', sql.Int, data.operationCatalogId || null)
         .input('modalityCatalogId', sql.Int, data.modalityCatalogId || null)
         .input('serviceCatalogId', sql.Int, data.serviceCatalogId || null)
+        .input('commodityCatalogId', sql.Int, data.commodityCatalogId || null)
         .input('origin', sql.NVarChar(150), data.origin)
         .input('originCountryId', sql.Int, data.originCountryId || null)
         .input('originPortId', sql.Int, data.originPortId || null)
@@ -165,6 +182,7 @@ class QuotationModel {
         .input('volumeUnitId', sql.Int, data.volumeUnitId || null)
         .input('incoterm', sql.NVarChar(20), data.incoterm || null)
         .input('transitTime', sql.NVarChar(80), data.transitTime || null)
+        .input('frequency', sql.NVarChar(120), data.frequency || null)
         .input('currency', sql.NVarChar(3), data.currency || 'USD')
         .input('profitMargin', sql.Decimal(9, 2), data.profitMargin ?? 0)
         .input('status', sql.NVarChar(30), data.status || 'solicitada_pricing')
@@ -175,15 +193,15 @@ class QuotationModel {
         .input('createdBy', sql.Int, data.createdBy || null)
         .query(`
           INSERT INTO dbo.Quotations
-            (quotationNumber, customerId, operationType, transportMode, operationCatalogId, modalityCatalogId, serviceCatalogId,
+            (quotationNumber, customerId, operationType, transportMode, operationCatalogId, modalityCatalogId, serviceCatalogId, commodityCatalogId,
              origin, originCountryId, originPortId, destination, destinationCountryId, destinationPortId,
-             commodity, quantity, quantityUnitId, grossWeight, weightUnitId, volume, volumeUnitId, incoterm, transitTime, currency, profitMargin, status, notes,
+             commodity, quantity, quantityUnitId, grossWeight, weightUnitId, volume, volumeUnitId, incoterm, transitTime, frequency, currency, profitMargin, status, notes,
              includesText, excludesText, requiredDocumentsText, createdBy)
           OUTPUT INSERTED.*
           VALUES
-            (@quotationNumber, @customerId, @operationType, @transportMode, @operationCatalogId, @modalityCatalogId, @serviceCatalogId,
+            (@quotationNumber, @customerId, @operationType, @transportMode, @operationCatalogId, @modalityCatalogId, @serviceCatalogId, @commodityCatalogId,
              @origin, @originCountryId, @originPortId, @destination, @destinationCountryId, @destinationPortId,
-             @commodity, @quantity, @quantityUnitId, @grossWeight, @weightUnitId, @volume, @volumeUnitId, @incoterm, @transitTime, @currency, @profitMargin, @status, @notes,
+             @commodity, @quantity, @quantityUnitId, @grossWeight, @weightUnitId, @volume, @volumeUnitId, @incoterm, @transitTime, @frequency, @currency, @profitMargin, @status, @notes,
              @includesText, @excludesText, @requiredDocumentsText, @createdBy)
         `);
 
@@ -195,11 +213,14 @@ class QuotationModel {
           .input('section', sql.NVarChar(50), charge.section || charge.chargeType || 'otros')
           .input('description', sql.NVarChar(200), charge.description || null)
           .input('currency', sql.NVarChar(3), charge.currency || data.currency || 'USD')
+          .input('quantity', sql.Decimal(18, 3), charge.quantity || 1)
           .input('costAmount', sql.Decimal(18, 2), charge.costAmount ?? 0)
           .input('saleAmount', sql.Decimal(18, 2), charge.saleAmount ?? charge.amount ?? 0)
+          .input('igvRate', sql.Decimal(9, 4), charge.igvRate ?? 0)
+          .input('igvAmount', sql.Decimal(18, 2), charge.igvAmount ?? 0)
           .query(`
-            INSERT INTO dbo.QuotationCharges (quotationId, chargeType, section, description, currency, costAmount, saleAmount)
-            VALUES (@quotationId, @chargeType, @section, @description, @currency, @costAmount, @saleAmount)
+            INSERT INTO dbo.QuotationCharges (quotationId, chargeType, section, description, currency, quantity, costAmount, saleAmount, igvRate, igvAmount)
+            VALUES (@quotationId, @chargeType, @section, @description, @currency, @quantity, @costAmount, @saleAmount, @igvRate, @igvAmount)
           `);
       }
 
@@ -226,6 +247,7 @@ class QuotationModel {
         .input('operationCatalogId', sql.Int, data.operationCatalogId || null)
         .input('modalityCatalogId', sql.Int, data.modalityCatalogId || null)
         .input('serviceCatalogId', sql.Int, data.serviceCatalogId || null)
+        .input('commodityCatalogId', sql.Int, data.commodityCatalogId || null)
         .input('origin', sql.NVarChar(150), data.origin)
         .input('originCountryId', sql.Int, data.originCountryId || null)
         .input('originPortId', sql.Int, data.originPortId || null)
@@ -241,6 +263,7 @@ class QuotationModel {
         .input('volumeUnitId', sql.Int, data.volumeUnitId || null)
         .input('incoterm', sql.NVarChar(20), data.incoterm || null)
         .input('transitTime', sql.NVarChar(80), data.transitTime || null)
+        .input('frequency', sql.NVarChar(120), data.frequency || null)
         .input('currency', sql.NVarChar(3), data.currency || 'USD')
         .input('profitMargin', sql.Decimal(9, 2), data.profitMargin ?? 0)
         .input('status', sql.NVarChar(30), data.status || 'solicitada_pricing')
@@ -256,6 +279,7 @@ class QuotationModel {
               operationCatalogId = @operationCatalogId,
               modalityCatalogId = @modalityCatalogId,
               serviceCatalogId = @serviceCatalogId,
+              commodityCatalogId = @commodityCatalogId,
               origin = @origin,
               originCountryId = @originCountryId,
               originPortId = @originPortId,
@@ -271,6 +295,7 @@ class QuotationModel {
               volumeUnitId = @volumeUnitId,
               incoterm = @incoterm,
               transitTime = @transitTime,
+              frequency = @frequency,
               currency = @currency,
               profitMargin = @profitMargin,
               status = @status,
@@ -300,8 +325,11 @@ class QuotationModel {
           .input('section', sql.NVarChar(50), charge.section || charge.chargeType || 'otros')
           .input('description', sql.NVarChar(200), charge.description || null)
           .input('currency', sql.NVarChar(3), charge.currency || data.currency || 'USD')
+          .input('quantity', sql.Decimal(18, 3), charge.quantity || 1)
           .input('costAmount', sql.Decimal(18, 2), charge.costAmount ?? 0)
-          .input('saleAmount', sql.Decimal(18, 2), charge.saleAmount ?? charge.amount ?? 0);
+          .input('saleAmount', sql.Decimal(18, 2), charge.saleAmount ?? charge.amount ?? 0)
+          .input('igvRate', sql.Decimal(9, 4), charge.igvRate ?? 0)
+          .input('igvAmount', sql.Decimal(18, 2), charge.igvAmount ?? 0);
 
         if (charge.id) {
           await chargeRequest.query(`
@@ -310,15 +338,18 @@ class QuotationModel {
                 section = @section,
                 description = @description,
                 currency = @currency,
+                quantity = @quantity,
                 costAmount = @costAmount,
-                saleAmount = @saleAmount
+                saleAmount = @saleAmount,
+                igvRate = @igvRate,
+                igvAmount = @igvAmount
             WHERE id = @chargeId
               AND quotationId = @quotationId
           `);
         } else {
           await chargeRequest.query(`
-            INSERT INTO dbo.QuotationCharges (quotationId, chargeType, section, description, currency, costAmount, saleAmount)
-            VALUES (@quotationId, @chargeType, @section, @description, @currency, @costAmount, @saleAmount)
+            INSERT INTO dbo.QuotationCharges (quotationId, chargeType, section, description, currency, quantity, costAmount, saleAmount, igvRate, igvAmount)
+            VALUES (@quotationId, @chargeType, @section, @description, @currency, @quantity, @costAmount, @saleAmount, @igvRate, @igvAmount)
           `);
         }
       }

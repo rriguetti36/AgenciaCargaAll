@@ -41,11 +41,16 @@ import { DataTable, ListCard, PageHeader, PrimaryActionButton } from '../compone
 
 const sections = [
   ['gastos_origen', 'GASTOS EN ORIGEN', null],
-  ['gastos_destino', 'GASTOS EN DESTINO', null],
-  ['flete_internacional', 'FLETE INTERNACIONAL', 'internationalFreight'],
-  ['seguro_internacional', 'SEGURO INTERNACIONAL', 'internationalInsurance'],
-  ['servicio_aduanas', 'SERVICIO DE ADUANAS', 'customsService'],
-  ['transporte_local', 'TRANSPORTE LOCAL', 'localTransport'],
+  ['gastos_destino', 'SERVICIOS Y GASTOS EN DESTINO', null],
+]
+
+const IGV_RATE = 0.18
+const currencyOptions = ['USD', 'PEN']
+const destinationQuickCharges = [
+  'Flete internacional',
+  'Seguro',
+  'Servicio de aduanas',
+  'Transporte local',
 ]
 
 const defaultDocuments = [
@@ -68,6 +73,7 @@ const emptyForm = {
   destination: '',
   destinationCountryId: '',
   destinationPortId: '',
+  commodityCatalogId: '',
   commodity: '',
   quantity: '',
   quantityUnitId: '',
@@ -77,6 +83,7 @@ const emptyForm = {
   volumeUnitId: '',
   incoterm: '',
   transitTime: '',
+  frequency: '',
   currency: 'USD',
   status: 'solicitada_pricing',
   notes: '',
@@ -105,6 +112,38 @@ const formatMeasure = (value, unitCode, decimals = 2) => {
 const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
 const splitLines = (value) => String(value || '').split('\n').map((line) => line.trim()).filter(Boolean)
 const normalizeText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+const loadPdfLogo = async () => {
+  const logoPaths = [
+    { path: '/imagenes/logo.png', format: 'PNG' },
+    { path: '/imagenes/logo.jpg', format: 'JPEG' },
+    { path: '/imagenes/logo.jpeg', format: 'JPEG' },
+  ]
+  for (const { path, format } of logoPaths) {
+    try {
+      const response = await fetch(path, { cache: 'no-store' })
+      if (!response.ok) continue
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.toLowerCase().startsWith('image/')) continue
+      const blob = await response.blob()
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(blob)
+      })
+      return dataUrl ? { dataUrl, format } : null
+    } catch {
+      // Continue with the next possible logo extension.
+    }
+  }
+  return null
+}
+const normalizeChargeSection = (value) => {
+  const section = value || 'gastos_destino'
+  return ['flete', 'seguro', 'aduana', 'flete_internacional', 'seguro_internacional', 'servicio_aduanas', 'transporte_local'].includes(section)
+    ? 'gastos_destino'
+    : section
+}
 
 function findPeruDefaults(masterData) {
   const peru = masterData.countries.find((country) => (
@@ -164,19 +203,16 @@ export default function Quotations() {
     operations: [],
     modalities: [],
     services: [],
+    commodities: [],
     countries: [],
     ports: [],
     tariffs: [],
     conditions: [],
     documents: [],
-    internationalFreight: [],
-    internationalInsurance: [],
-    customsService: [],
-    localTransport: [],
     units: [],
   })
   const [form, setForm] = useState(emptyForm)
-  const [editingSection, setEditingSection] = useState('flete_internacional')
+  const [editingSection, setEditingSection] = useState('gastos_destino')
   const [editingQuotationId, setEditingQuotationId] = useState(null)
   const [viewMode, setViewMode] = useState('list')
   const [tariffModal, setTariffModal] = useState({ isOpen: false, type: null })
@@ -194,21 +230,33 @@ export default function Quotations() {
   const isAdvisor = currentUser?.role === 'asesor'
   const isCommercial = ['asesor', 'user', 'customer_service', 'admin'].includes(currentUser?.role)
   const canAccessOperations = !['asesor', 'pricing'].includes(currentUser?.role)
-  const canEditCharges = isPricing
   const advisorCanEditRequest = isAdvisor && (!editingQuotationId || form.status === 'solicitada_pricing')
+  const canEditCharges = isPricing || advisorCanEditRequest
   const canSubmitForm = isPricing || !isAdvisor || advisorCanEditRequest
   const advisorCanViewPricing = isAdvisor && editingQuotationId && form.status !== 'solicitada_pricing'
-  const showPricingDetail = !isAdvisor || advisorCanViewPricing
+  const showPricingDetail = !isAdvisor || advisorCanEditRequest || advisorCanViewPricing
   const canEditOperationInfo = !isAdvisor || advisorCanEditRequest || isPricing
 
+  const chargeQuantity = (charge) => Number(charge.quantity || 1)
+  const chargeSaleSubtotal = (charge) => Number(charge.saleAmount || 0) * chargeQuantity(charge)
+  const chargeCostSubtotal = (charge) => Number(charge.costAmount || 0) * chargeQuantity(charge)
+  const chargeIgvAmount = (charge) => {
+    if (charge.section !== 'gastos_destino') return 0
+    const rate = Number(charge.igvRate ?? IGV_RATE)
+    return chargeSaleSubtotal(charge) * rate
+  }
+  const chargeLineTotal = (charge) => chargeSaleSubtotal(charge) + chargeIgvAmount(charge)
   const totalQuoted = useMemo(() => {
-    return form.charges.reduce((sum, charge) => sum + Number(charge.saleAmount || 0), 0)
+    return form.charges.reduce((sum, charge) => sum + chargeLineTotal(charge), 0)
   }, [form.charges])
   const totalCost = useMemo(() => {
-    return form.charges.reduce((sum, charge) => sum + Number(charge.costAmount || 0), 0)
+    return form.charges.reduce((sum, charge) => sum + chargeCostSubtotal(charge), 0)
   }, [form.charges])
-  const estimatedProfit = totalQuoted - totalCost
-  const estimatedMargin = totalQuoted > 0 ? (estimatedProfit / totalQuoted) * 100 : 0
+  const totalSaleBeforeTax = useMemo(() => {
+    return form.charges.reduce((sum, charge) => sum + chargeSaleSubtotal(charge), 0)
+  }, [form.charges])
+  const estimatedProfit = totalSaleBeforeTax - totalCost
+  const estimatedMargin = totalSaleBeforeTax > 0 ? (estimatedProfit / totalSaleBeforeTax) * 100 : 0
 
   const portsByCountry = (countryId) => master.ports.filter((port) => String(port.countryId) === String(countryId))
   const findCountryName = (countryId) => master.countries.find((country) => String(country.id) === String(countryId))?.name || ''
@@ -234,15 +282,12 @@ export default function Quotations() {
       operationsRes,
       modalitiesRes,
       servicesRes,
+      commoditiesRes,
       countriesRes,
       portsRes,
       tariffsRes,
       conditionsRes,
       documentsRes,
-      internationalFreightRes,
-      internationalInsuranceRes,
-      customsServiceRes,
-      localTransportRes,
       unitsRes,
     ] = await Promise.all([
       api.get('/customers'),
@@ -250,15 +295,12 @@ export default function Quotations() {
       api.get('/master-data/operations'),
       api.get('/master-data/modalities'),
       api.get('/master-data/services'),
+      api.get('/master-data/commodities'),
       api.get('/master-data/countries'),
       api.get('/master-data/ports'),
       api.get('/master-data/tariffs'),
       api.get('/master-data/conditions'),
       api.get('/master-data/documents'),
-      api.get('/master-data/internationalFreight'),
-      api.get('/master-data/internationalInsurance'),
-      api.get('/master-data/customsService'),
-      api.get('/master-data/localTransport'),
       api.get('/master-data/units'),
     ])
     setCustomers(customersRes.data)
@@ -267,15 +309,12 @@ export default function Quotations() {
       operations: operationsRes.data,
       modalities: modalitiesRes.data,
       services: servicesRes.data,
+      commodities: commoditiesRes.data,
       countries: countriesRes.data,
       ports: portsRes.data,
       tariffs: tariffsRes.data,
       conditions: conditionsRes.data,
       documents: documentsRes.data,
-      internationalFreight: internationalFreightRes.data,
-      internationalInsurance: internationalInsuranceRes.data,
-      customsService: customsServiceRes.data,
-      localTransport: localTransportRes.data,
       units: unitsRes.data,
     }
     setMaster(nextMaster)
@@ -368,14 +407,20 @@ export default function Quotations() {
       }
       if (name === 'originCountryId') return { ...prev, originCountryId: value, originPortId: '' }
       if (name === 'destinationCountryId') return { ...prev, destinationCountryId: value, destinationPortId: '' }
+      if (name === 'commodityCatalogId') {
+        const selectedCommodity = master.commodities.find((item) => String(item.id) === String(value))
+        return { ...prev, commodityCatalogId: value, commodity: selectedCommodity?.name || '' }
+      }
       return { ...prev, [name]: value }
     })
   }
 
   const updateCharge = (index, field, value) => {
+    const numericFields = ['costAmount', 'saleAmount', 'quantity', 'igvRate']
+    const nextValue = numericFields.includes(field) ? String(value).replace(',', '.') : value
     setForm((prev) => ({
       ...prev,
-      charges: prev.charges.map((charge, i) => (i === index ? { ...charge, [field]: ['saleAmount', 'costAmount'].includes(field) ? Number(value || 0) : value } : charge)),
+      charges: prev.charges.map((charge, i) => (i === index ? { ...charge, [field]: nextValue } : charge)),
     }))
   }
 
@@ -390,7 +435,27 @@ export default function Quotations() {
     setEditingSection(section)
     setForm((prev) => ({
       ...prev,
-      charges: [...prev.charges, { section, chargeType: section, description: '', currency: prev.currency || 'USD', costAmount: 0, saleAmount: 0 }],
+      charges: [...prev.charges, { section, chargeType: section, description: '', currency: prev.currency || 'USD', quantity: 1, costAmount: 0, saleAmount: 0, igvRate: section === 'gastos_destino' ? IGV_RATE : 0 }],
+    }))
+  }
+
+  const addQuickCharge = (section, description) => {
+    setEditingSection(section)
+    setForm((prev) => ({
+      ...prev,
+      charges: [
+        ...prev.charges,
+        {
+          section,
+          chargeType: section,
+          description,
+          currency: prev.currency || 'USD',
+          quantity: 1,
+          costAmount: 0,
+          saleAmount: 0,
+          igvRate: section === 'gastos_destino' ? IGV_RATE : 0,
+        },
+      ],
     }))
   }
 
@@ -406,8 +471,10 @@ export default function Quotations() {
           chargeType: section,
           description: concept.name,
           currency: concept.currency || prev.currency || 'USD',
+          quantity: 1,
           costAmount: Number(concept.amount || 0),
           saleAmount: Number(concept.amount || 0),
+          igvRate: section === 'gastos_destino' ? IGV_RATE : 0,
         },
       ],
     }))
@@ -424,8 +491,10 @@ export default function Quotations() {
           chargeType: section,
           description: tariff.concept,
           currency: tariff.currency,
+          quantity: 1,
           costAmount: Number(tariff.amount || 0),
           saleAmount: Number(tariff.amount || 0),
+          igvRate: section === 'gastos_destino' ? IGV_RATE : 0,
         },
       ],
     }))
@@ -445,8 +514,10 @@ export default function Quotations() {
           chargeType: section,
           description: tariff.concept,
           currency: tariff.currency,
+          quantity: 1,
           costAmount: Number(tariff.amount || 0),
           saleAmount: Number(tariff.amount || 0),
+          igvRate: section === 'gastos_destino' ? IGV_RATE : 0,
         })),
       ],
     }))
@@ -489,6 +560,8 @@ export default function Quotations() {
         operationCatalogId: form.operationCatalogId ? Number(form.operationCatalogId) : null,
         modalityCatalogId: form.modalityCatalogId ? Number(form.modalityCatalogId) : null,
         serviceCatalogId: form.serviceCatalogId ? Number(form.serviceCatalogId) : null,
+        commodityCatalogId: form.commodityCatalogId ? Number(form.commodityCatalogId) : null,
+        commodity: master.commodities.find((item) => String(item.id) === String(form.commodityCatalogId))?.name || form.commodity || '',
         originCountryId: form.originCountryId ? Number(form.originCountryId) : null,
         originPortId: form.originPortId ? Number(form.originPortId) : null,
         destinationCountryId: form.destinationCountryId ? Number(form.destinationCountryId) : null,
@@ -499,20 +572,31 @@ export default function Quotations() {
         weightUnitId: form.weightUnitId ? Number(form.weightUnitId) : null,
         volume: form.volume === '' ? 0 : Number(form.volume),
         volumeUnitId: form.volumeUnitId ? Number(form.volumeUnitId) : null,
-        charges: form.charges.filter((charge) => charge.description || Number(charge.saleAmount)),
+        charges: form.charges
+          .filter((charge) => charge.description || Number(charge.saleAmount))
+          .map((charge) => ({
+            ...charge,
+            quantity: Number(charge.quantity || 1),
+            costAmount: Number(charge.costAmount || 0),
+            saleAmount: Number(charge.saleAmount || 0),
+            igvRate: charge.section === 'gastos_destino' ? Number(charge.igvRate ?? IGV_RATE) : 0,
+            igvAmount: charge.section === 'gastos_destino'
+              ? Number((Number(charge.saleAmount || 0) * Number(charge.quantity || 1) * Number(charge.igvRate ?? IGV_RATE)).toFixed(2))
+              : 0,
+          })),
   })
 
   const resetForm = () => {
     setForm(buildDefaultForm(master))
     setEditingQuotationId(null)
-    setEditingSection('flete_internacional')
+    setEditingSection('gastos_destino')
     setViewMode('list')
   }
 
   const startNewQuotation = () => {
     setForm(buildDefaultForm(master))
     setEditingQuotationId(null)
-    setEditingSection('flete_internacional')
+    setEditingSection('gastos_destino')
     setViewMode('form')
   }
 
@@ -560,7 +644,8 @@ export default function Quotations() {
         destination: data.destination || '',
         destinationCountryId: data.destinationCountryId ? String(data.destinationCountryId) : '',
         destinationPortId: data.destinationPortId ? String(data.destinationPortId) : '',
-        commodity: data.commodity || '',
+        commodityCatalogId: data.commodityCatalogId ? String(data.commodityCatalogId) : '',
+        commodity: data.commodityName || data.commodity || '',
         quantity: data.quantity == null ? '' : String(data.quantity),
         quantityUnitId: data.quantityUnitId ? String(data.quantityUnitId) : '',
         grossWeight: data.grossWeight == null ? '' : String(data.grossWeight),
@@ -569,6 +654,7 @@ export default function Quotations() {
         volumeUnitId: data.volumeUnitId ? String(data.volumeUnitId) : '',
         incoterm: data.incoterm || '',
         transitTime: data.transitTime || '',
+        frequency: data.frequency || '',
         currency: data.currency || 'USD',
         status: data.status || 'borrador',
         notes: data.notes || '',
@@ -577,12 +663,15 @@ export default function Quotations() {
         requiredDocumentsText: data.requiredDocumentsText || defaultDocuments.join('\n'),
         charges: (data.charges || []).map((charge) => ({
           id: charge.id,
-          section: charge.section || charge.chargeType,
-          chargeType: charge.chargeType || charge.section,
+          section: normalizeChargeSection(charge.section || charge.chargeType),
+          chargeType: normalizeChargeSection(charge.chargeType || charge.section),
           description: charge.description || '',
           currency: charge.currency || data.currency || 'USD',
+          quantity: Number(charge.quantity || 1),
           saleAmount: Number(charge.saleAmount || 0),
           costAmount: Number(charge.costAmount || 0),
+          igvRate: Number(charge.igvRate ?? ((charge.section || charge.chargeType) === 'gastos_destino' ? IGV_RATE : 0)),
+          igvAmount: Number(charge.igvAmount || 0),
         })),
       })
     } catch (err) {
@@ -635,7 +724,22 @@ export default function Quotations() {
     try {
       const { data } = await api.get(`/quotations/${quotationId}`)
       const charges = data.charges || []
-      const totalSale = charges.reduce((sum, charge) => sum + Number(charge.saleAmount || 0), 0)
+      const lineSaleSubtotal = (charge) => Number(charge.saleAmount || 0) * Number(charge.quantity || 1)
+      const lineIgv = (charge) => normalizeChargeSection(charge.section || charge.chargeType) === 'gastos_destino'
+        ? lineSaleSubtotal(charge) * Number(charge.igvRate ?? IGV_RATE)
+        : 0
+      const lineTotal = (charge) => lineSaleSubtotal(charge) + lineIgv(charge)
+      const totalSale = charges.reduce((sum, charge) => sum + lineTotal(charge), 0)
+      const formatCountryPort = (countryName, portName, fallback) => {
+        const country = cleanText(countryName)
+        const port = cleanText(portName)
+        if (country && port) return `${country} / ${port}`
+        if (country) return country
+        if (port) return port
+        return fallback || '-'
+      }
+      const originLabel = formatCountryPort(data.originCountryName, data.originPortName, data.origin)
+      const destinationLabel = formatCountryPort(data.destinationCountryName, data.destinationPortName, data.destination)
       const cargoSummary = [
         `Cantidad: ${formatMeasure(data.quantity, data.quantityUnitCode)}`,
         `Peso: ${formatMeasure(data.grossWeight, data.weightUnitCode)}`,
@@ -645,6 +749,7 @@ export default function Quotations() {
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
       const margin = 42
+      const logo = await loadPdfLogo()
       let y = 42
 
       const checkPage = (needed = 40) => {
@@ -673,58 +778,110 @@ export default function Quotations() {
         doc.text(title.toUpperCase(), margin, y)
         y += 14
       }
-      const addField = (label, value, x, w) => {
-        checkPage(46)
-        doc.setDrawColor(229, 231, 235)
-        doc.roundedRect(x, y, w, 40, 4, 4)
-        doc.setFont('helvetica', 'bold')
-        doc.setFontSize(7)
-        doc.setTextColor(107, 114, 128)
-        doc.text(label.toUpperCase(), x + 8, y + 13)
-        doc.setFont('helvetica', 'normal')
-        doc.setFontSize(9)
-        doc.setTextColor(31, 41, 55)
-        doc.text(doc.splitTextToSize(cleanText(value) || '-', w - 16), x + 8, y + 28)
+      const addInlineInfoRow = (items, options = {}) => {
+        checkPage(18)
+        const gap = 16
+        const colW = (pageWidth - margin * 2 - gap * (items.length - 1)) / items.length
+        const size = options.size || 8
+        let rowHeight = size + 5
+        items.forEach(([label, value], index) => {
+          const x = margin + (colW + gap) * index
+          const labelText = `${label}: `
+          doc.setFontSize(size)
+          doc.setFont('helvetica', 'bold')
+          doc.setTextColor(75, 85, 99)
+          doc.text(labelText, x, y)
+          const labelWidth = doc.getTextWidth(labelText)
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(31, 41, 55)
+          const lines = doc.splitTextToSize(cleanText(value) || '-', colW - labelWidth)
+          doc.text(lines, x + labelWidth, y)
+          rowHeight = Math.max(rowHeight, lines.length * (size + 3))
+        })
+        y += rowHeight + 5
+      }
+      const addThreeColumnLists = (columns) => {
+        checkPage(70)
+        const gap = 12
+        const colW = (pageWidth - margin * 2 - gap * 2) / 3
+        const starts = [margin, margin + colW + gap, margin + (colW + gap) * 2]
+        const titleHeight = 16
+        const padding = 1
+        const columnLines = columns.map((column) => (
+          (column.items.length ? column.items : ['-']).map((item) => doc.splitTextToSize(`- ${cleanText(item) || '-'}`, colW))
+        ))
+        const columnHeights = columnLines.map((linesGroup) => (
+          titleHeight + linesGroup.reduce((sum, lines) => sum + (lines.length * 9) + 4, 0) + 6
+        ))
+        const boxHeight = Math.max(46, ...columnHeights)
+        checkPage(boxHeight + 4)
+        columns.forEach((column, index) => {
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(8)
+          doc.setTextColor(15, 118, 110)
+          doc.text(column.title, starts[index] + padding, y + 14)
+        })
+        columns.forEach((column, index) => {
+          let columnY = y + titleHeight + 10
+          columnLines[index].forEach((lines) => {
+            doc.setFont('helvetica', 'normal')
+            doc.setFontSize(7)
+            doc.setTextColor(31, 41, 55)
+            doc.text(lines, starts[index] + padding, columnY)
+            columnY += lines.length * 9 + 4
+          })
+        })
+        y += boxHeight + 8
       }
 
       doc.setFillColor(15, 118, 110)
       doc.rect(0, 0, pageWidth, 10, 'F')
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(22)
-      doc.setTextColor(15, 118, 110)
-      doc.text('CargaPer', margin, y)
-      doc.setFontSize(9)
-      doc.setTextColor(107, 114, 128)
-      doc.text('Agencia de Carga', margin, y + 14)
+      doc.setDrawColor(209, 213, 219)
+      if (logo) {
+        doc.addImage(logo.dataUrl, logo.format, margin, y - 12, 130, 62, undefined, 'FAST')
+      } else {
+        doc.roundedRect(margin, y - 12, 130, 62, 4, 4)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(156, 163, 175)
+        doc.text('Logo', margin + 65, y + 21, { align: 'center' })
+      }
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(18)
       doc.setTextColor(31, 41, 55)
-      doc.text(`Cotizacion ${data.quotationNumber || ''}`, pageWidth - margin, y, { align: 'right' })
+      doc.text(data.quotationNumber || '', pageWidth - margin, y, { align: 'right' })
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(9)
       doc.setTextColor(107, 114, 128)
       doc.text(`Fecha: ${new Date(data.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin, y + 14, { align: 'right' })
-      doc.text(`Estado: ${statusLabel(data.status)}`, pageWidth - margin, y + 28, { align: 'right' })
-      y += 54
+      doc.text(`Asesor: ${data.createdByName || '-'}`, pageWidth - margin, y + 28, { align: 'right' })
+      doc.text(`Telefono: ${data.createdByPhone || '-'}`, pageWidth - margin, y + 42, { align: 'right' })
+      y += 62
       doc.setDrawColor(15, 118, 110)
       doc.line(margin, y, pageWidth - margin, y)
       y += 18
 
       addSectionTitle('Informacion del cliente y servicio')
-      const colGap = 12
-      const colW = (pageWidth - margin * 2 - colGap) / 2
-      addField('Cliente', data.customerName || '-', margin, colW)
-      addField('Servicio', data.serviceName || data.transportMode || '-', margin + colW + colGap, colW)
-      y += 50
-      addField('Origen', data.origin || '-', margin, colW)
-      addField('Destino', data.destination || '-', margin + colW + colGap, colW)
-      y += 50
-      addField('Mercaderia', data.commodity || '-', margin, colW)
-      addField('Carga', cargoSummary, margin + colW + colGap, colW)
-      y += 50
-      addField('Incoterm', data.incoterm || '-', margin, colW)
-      addField('Tiempo transito', data.transitTime || '-', margin + colW + colGap, colW)
-      y += 48
+      addInlineInfoRow([
+        ['Cliente', data.customerName || '-'],
+        ['Servicio', data.serviceName || data.transportMode || '-'],
+        ['Mercaderia', data.commodity || '-'],
+      ])
+      addInlineInfoRow([
+        ['Origen', originLabel],
+        ['Destino', destinationLabel],
+      ])
+      addInlineInfoRow([
+        ['Cantidad', formatMeasure(data.quantity, data.quantityUnitCode)],
+        ['Peso', formatMeasure(data.grossWeight, data.weightUnitCode)],
+        ['Volumen', formatMeasure(data.volume, data.volumeUnitCode)],
+      ])
+      addInlineInfoRow([
+        ['Incoterm', data.incoterm || '-'],
+        ['Tiempo transito', data.transitTime || '-'],
+        ['Frecuencia', data.frequency || '-'],
+      ])
+      y += 4
 
       addSectionTitle('Detalle cotizado')
       doc.setFont('helvetica', 'bold')
@@ -733,12 +890,13 @@ export default function Quotations() {
       doc.setFillColor(243, 244, 246)
       doc.rect(margin, y, pageWidth - margin * 2, 22, 'F')
       doc.text('Concepto', margin + 8, y + 14)
-      doc.text('Moneda', pageWidth - 150, y + 14)
+      doc.text('Cant.', pageWidth - 220, y + 14, { align: 'right' })
+      doc.text('Moneda', pageWidth - 170, y + 14)
       doc.text('Venta', pageWidth - margin - 8, y + 14, { align: 'right' })
       y += 22
 
       sections.forEach(([section, label]) => {
-        const sectionCharges = charges.filter((charge) => (charge.section || charge.chargeType) === section)
+        const sectionCharges = charges.filter((charge) => normalizeChargeSection(charge.section || charge.chargeType) === section)
         if (!sectionCharges.length) return
         checkPage(24)
         doc.setFillColor(204, 251, 241)
@@ -755,12 +913,13 @@ export default function Quotations() {
           doc.setFont('helvetica', 'normal')
           doc.setFontSize(8)
           doc.setTextColor(31, 41, 55)
-          doc.text(doc.splitTextToSize(cleanText(charge.description || '-'), pageWidth - 230), margin + 8, y + 14)
-          doc.text(charge.currency || data.currency || 'USD', pageWidth - 150, y + 14)
-          doc.text(Number(charge.saleAmount || 0).toFixed(2), pageWidth - margin - 8, y + 14, { align: 'right' })
+          doc.text(doc.splitTextToSize(cleanText(charge.description || '-'), pageWidth - 270), margin + 8, y + 14)
+          doc.text(Number(charge.quantity || 1).toFixed(3), pageWidth - 220, y + 14, { align: 'right' })
+          doc.text(charge.currency || data.currency || 'USD', pageWidth - 170, y + 14)
+          doc.text(lineTotal(charge).toFixed(2), pageWidth - margin - 8, y + 14, { align: 'right' })
           y += 22
         })
-        const subtotal = sectionCharges.reduce((sum, charge) => sum + Number(charge.saleAmount || 0), 0)
+        const subtotal = sectionCharges.reduce((sum, charge) => sum + lineTotal(charge), 0)
         checkPage(22)
         doc.setFont('helvetica', 'bold')
         doc.text('Subtotal', pageWidth - 180, y + 14)
@@ -776,13 +935,11 @@ export default function Quotations() {
       y += 36
 
       addSectionTitle('Condiciones')
-      addText('Incluye', margin, { size: 9, bold: true, color: [15, 118, 110] })
-      ;(splitLines(data.includesText).length ? splitLines(data.includesText) : ['-']).forEach((line) => addText(`- ${line}`, margin + 10, { size: 8 }))
-      addText('No incluye', margin, { size: 9, bold: true, color: [15, 118, 110] })
-      ;(splitLines(data.excludesText).length ? splitLines(data.excludesText) : ['-']).forEach((line) => addText(`- ${line}`, margin + 10, { size: 8 }))
-
-      addSectionTitle('Documentos requeridos')
-      ;(splitLines(data.requiredDocumentsText).length ? splitLines(data.requiredDocumentsText) : ['-']).forEach((line) => addText(`- ${line}`, margin + 10, { size: 8 }))
+      addThreeColumnLists([
+        { title: 'Incluye', items: splitLines(data.includesText).length ? splitLines(data.includesText) : ['-'] },
+        { title: 'No incluye', items: splitLines(data.excludesText).length ? splitLines(data.excludesText) : ['-'] },
+        { title: 'Documentos requeridos', items: splitLines(data.requiredDocumentsText).length ? splitLines(data.requiredDocumentsText) : ['-'] },
+      ])
 
       checkPage(40)
       y += 12
@@ -851,7 +1008,7 @@ export default function Quotations() {
           </Flex>
           <Heading size="sm" mb={4}>{isAdvisor ? 'Solicitud de cotizacion' : '1. Informacion de la operacion'}</Heading>
           <Box as="fieldset" disabled={!canEditOperationInfo} border="0" p={0} m={0}>
-          <Grid templateColumns={{ base: '1fr', xl: 'repeat(4, 1fr)' }} gap={4}>
+          <Grid templateColumns={{ base: '1fr', xl: 'repeat(5, 1fr)' }} gap={4}>
             <FormControl isRequired>
               <FormLabel>Cliente</FormLabel>
               <Select name="customerId" value={form.customerId} onChange={handleChange}>
@@ -878,6 +1035,12 @@ export default function Quotations() {
               <Select name="serviceCatalogId" value={form.serviceCatalogId} onChange={handleChange}>
                 <option value="">Seleccionar</option>
                 {master.services.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </Select>
+            </FormControl>
+            <FormControl>
+              <FormLabel>Moneda base</FormLabel>
+              <Select name="currency" value={form.currency} onChange={handleChange}>
+                {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
               </Select>
             </FormControl>
             <FormControl>
@@ -930,7 +1093,10 @@ export default function Quotations() {
             </FormControl>
             <FormControl>
               <FormLabel>Mercaderia</FormLabel>
-              <Input name="commodity" value={form.commodity} onChange={handleChange} />
+              <Select name="commodityCatalogId" value={form.commodityCatalogId} onChange={handleChange}>
+                <option value="">Seleccionar</option>
+                {master.commodities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </Select>
             </FormControl>
             <Box gridColumn={{ base: 'auto', xl: '1 / -1' }}>
               <Grid templateColumns={{ base: '1fr', md: 'repeat(2, 1fr)', xl: 'repeat(6, 1fr)' }} gap={4}>
@@ -978,6 +1144,10 @@ export default function Quotations() {
               <Input name="transitTime" value={form.transitTime} onChange={handleChange} />
             </FormControl>
             <FormControl>
+              <FormLabel>Frecuencia</FormLabel>
+              <Input name="frequency" value={form.frequency} onChange={handleChange} />
+            </FormControl>
+            <FormControl>
               <FormLabel>Estado</FormLabel>
               <Select name="status" value={form.status} isDisabled>
                 {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -988,11 +1158,11 @@ export default function Quotations() {
 
           {showPricingDetail && (
           <>
-          <Heading size="md" mt={6} mb={4}>{isAdvisor ? 'Cotizacion preparada por Pricing' : 'Detalle de la cotizacion'}</Heading>
+          <Heading size="md" mt={6} mb={4}>{isAdvisor && !advisorCanEditRequest ? 'Cotizacion preparada por Pricing' : 'Detalle de la cotizacion'}</Heading>
           <Stack spacing={4}>
             {sections.map(([section, label, masterKey]) => {
               const charges = form.charges.filter((charge) => charge.section === section)
-              const sectionSubtotal = charges.reduce((sum, charge) => sum + Number(charge.saleAmount || 0), 0)
+              const sectionSubtotal = charges.reduce((sum, charge) => sum + chargeLineTotal(charge), 0)
               const tariffType = section === 'gastos_origen' ? 'origen' : section === 'gastos_destino' ? 'destino' : null
               return (
                 <Box key={section} borderWidth="1px" borderColor="gray.200" borderRadius="md" p={4}>
@@ -1042,13 +1212,37 @@ export default function Quotations() {
                       {canEditCharges && <ActionButton size="sm" colorScheme="teal" label="Agregar item" icon={<AddIcon />} onClick={() => addCharge(section)} />}
                     </HStack>
                   </Flex>
+                  {canEditCharges && section === 'gastos_destino' && (
+                    <Box mb={3}>
+                      <Text fontSize="xs" color="gray.500" fontWeight="700" mb={2}>
+                        Agregar rapido
+                      </Text>
+                      <Flex gap={2} wrap="wrap">
+                        {destinationQuickCharges.map((description) => (
+                          <Button
+                            key={description}
+                            size="xs"
+                            variant="outline"
+                            colorScheme="teal"
+                            leftIcon={<AddIcon />}
+                            onClick={() => addQuickCharge(section, description)}
+                          >
+                            {description}
+                          </Button>
+                        ))}
+                      </Flex>
+                    </Box>
+                  )}
                   <Table size="sm">
                     <Thead bg="gray.50">
                       <Tr>
                         <Th>Concepto</Th>
                         <Th>Moneda</Th>
+                        <Th isNumeric>Cantidad</Th>
                         <Th isNumeric>Costo</Th>
-                        <Th isNumeric>Venta</Th>
+                        <Th isNumeric>Costo final</Th>
+                        {section === 'gastos_destino' && <Th isNumeric>IGV</Th>}
+                        <Th isNumeric>Total</Th>
                         <Th isNumeric>Utilidad</Th>
                         <Th isNumeric>Margen</Th>
                         <Th>Accion</Th>
@@ -1064,27 +1258,44 @@ export default function Quotations() {
                               {editable ? <Input value={charge.description} onChange={(e) => updateCharge(index, 'description', e.target.value)} /> : charge.description || '-'}
                             </Td>
                             <Td>
-                              {editable ? <Input maxLength={3} value={charge.currency} onChange={(e) => updateCharge(index, 'currency', e.target.value.toUpperCase())} /> : charge.currency}
+                              {editable ? (
+                                <Select value={charge.currency || form.currency} onChange={(e) => updateCharge(index, 'currency', e.target.value)}>
+                                  {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                                </Select>
+                              ) : charge.currency}
                             </Td>
                             <Td isNumeric>
                               {editable ? (
-                                <NumberInput value={charge.costAmount || 0} min={0} onChange={(value) => updateCharge(index, 'costAmount', value)}>
+                                <NumberInput value={charge.quantity ?? ''} min={0} step={0.001} onChange={(value) => updateCharge(index, 'quantity', value)}>
+                                  <NumberInputField textAlign="right" />
+                                </NumberInput>
+                              ) : Number(charge.quantity || 1).toFixed(3)}
+                            </Td>
+                            <Td isNumeric>
+                              {editable ? (
+                                <NumberInput value={charge.costAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'costAmount', value)}>
                                   <NumberInputField textAlign="right" />
                                 </NumberInput>
                               ) : Number(charge.costAmount || 0).toFixed(2)}
                             </Td>
                             <Td isNumeric>
                               {editable ? (
-                                <NumberInput value={charge.saleAmount} min={0} onChange={(value) => updateCharge(index, 'saleAmount', value)}>
+                                <NumberInput value={charge.saleAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'saleAmount', value)}>
                                   <NumberInputField textAlign="right" />
                                 </NumberInput>
                               ) : Number(charge.saleAmount || 0).toFixed(2)}
                             </Td>
-                            <Td isNumeric color={Number(charge.saleAmount || 0) - Number(charge.costAmount || 0) >= 0 ? 'green.600' : 'red.600'} fontWeight="700">
-                              {(Number(charge.saleAmount || 0) - Number(charge.costAmount || 0)).toFixed(2)}
+                            {section === 'gastos_destino' && (
+                              <Td isNumeric>{chargeIgvAmount(charge).toFixed(2)}</Td>
+                            )}
+                            <Td isNumeric fontWeight="700">
+                              {chargeLineTotal(charge).toFixed(2)}
+                            </Td>
+                            <Td isNumeric color={chargeSaleSubtotal(charge) - chargeCostSubtotal(charge) >= 0 ? 'green.600' : 'red.600'} fontWeight="700">
+                              {(chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)).toFixed(2)}
                             </Td>
                             <Td isNumeric>
-                              {Number(charge.saleAmount || 0) > 0 ? (((Number(charge.saleAmount || 0) - Number(charge.costAmount || 0)) / Number(charge.saleAmount || 0)) * 100).toFixed(2) : '0.00'}%
+                              {chargeSaleSubtotal(charge) > 0 ? (((chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)) / chargeSaleSubtotal(charge)) * 100).toFixed(2) : '0.00'}%
                             </Td>
                             <Td>
                               {canEditCharges && <ActionButton size="xs" colorScheme="red" variant="outline" label="Eliminar item" icon={<DeleteIcon />} onClick={() => removeCharge(index)} />}
@@ -1207,9 +1418,7 @@ export default function Quotations() {
                 <Td>
                   <HStack>
                     <ActionButton size="sm" variant="outline" label={isAdvisor && quotation.status !== 'solicitada_pricing' ? 'Ver cotizacion' : isAdvisor ? 'Editar solicitud' : 'Editar cotizacion'} icon={isAdvisor && quotation.status !== 'solicitada_pricing' ? <ViewIcon /> : <EditIcon />} onClick={() => editQuotation(quotation)} />
-                    {quotation.status !== 'solicitada_pricing' && (
-                      <ActionButton size="sm" variant="outline" colorScheme="teal" label="Generar PDF" icon={<DownloadIcon />} onClick={() => openQuotationPdf(quotation.id)} />
-                    )}
+                    <ActionButton size="sm" variant="outline" colorScheme="teal" label="Generar PDF" icon={<DownloadIcon />} onClick={() => openQuotationPdf(quotation.id)} />
                     {isPricing && ['solicitada_pricing', 'pricing_completado'].includes(quotation.status) && (
                       <ActionButton size="sm" colorScheme="purple" label="Completar pricing" icon={<CheckIcon />} onClick={() => completePricing(quotation)} />
                     )}
@@ -1288,6 +1497,9 @@ export default function Quotations() {
               isDisabled={!selectedTariffs.length}
               onClick={() => applyAllTariffs(selectedTariffType)}
             />
+            <Button variant="ghost" leftIcon={<CloseIcon />} onClick={() => setTariffModal({ isOpen: false, type: null })}>
+              Salir
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

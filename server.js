@@ -16,7 +16,9 @@ const managementReportRoutes = require('./routes/managementReportRoutes');
 migrateAddRoleColumn();
 
 const app = express();
-const allowedOrigin = process.env.CLIENT_ORIGIN || /http:\/\/localhost:\d+/;
+const allowedOrigin = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : /http:\/\/localhost:\d+/;
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 const DEFAULT_PORT = parseInt(process.env.PORT, 10) || 3001;
 

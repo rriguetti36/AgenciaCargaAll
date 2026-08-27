@@ -343,12 +343,26 @@ BEGIN
         phone NVARCHAR(50) NULL,
         estado BIT NOT NULL
             CONSTRAINT DF_Customers_estado DEFAULT (1),
+        createdBy INT NULL,
         createdAt DATETIME2(7) NOT NULL
             CONSTRAINT DF_Customers_createdAt DEFAULT (SYSUTCDATETIME()),
         updatedAt DATETIME2(7) NOT NULL
             CONSTRAINT DF_Customers_updatedAt DEFAULT (SYSUTCDATETIME()),
-        CONSTRAINT PK_Customers PRIMARY KEY CLUSTERED (id)
+        CONSTRAINT PK_Customers PRIMARY KEY CLUSTERED (id),
+        CONSTRAINT FK_Customers_CreatedBy FOREIGN KEY (createdBy) REFERENCES dbo.Users(id)
     );
+END
+GO
+
+IF COL_LENGTH(N'dbo.Customers', N'createdBy') IS NULL
+BEGIN
+    ALTER TABLE dbo.Customers ADD createdBy INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_Customers_CreatedBy' AND parent_object_id = OBJECT_ID(N'dbo.Customers'))
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK ADD CONSTRAINT FK_Customers_CreatedBy FOREIGN KEY (createdBy) REFERENCES dbo.Users(id);
 END
 GO
 
@@ -1175,11 +1189,19 @@ BEGIN
         email NVARCHAR(150) NULL,
         phone NVARCHAR(50) NULL,
         estado BIT NOT NULL CONSTRAINT DF_Customers_estado DEFAULT (1),
+        createdBy INT NULL,
         createdAt DATETIME2(7) NOT NULL CONSTRAINT DF_Customers_createdAt DEFAULT (SYSUTCDATETIME()),
         updatedAt DATETIME2(7) NOT NULL CONSTRAINT DF_Customers_updatedAt DEFAULT (SYSUTCDATETIME()),
-        CONSTRAINT PK_Customers PRIMARY KEY CLUSTERED (id)
+        CONSTRAINT PK_Customers PRIMARY KEY CLUSTERED (id),
+        CONSTRAINT FK_Customers_CreatedBy FOREIGN KEY (createdBy) REFERENCES dbo.Users(id)
     );
 END;
+
+IF COL_LENGTH(N''dbo.Customers'', N''createdBy'') IS NULL
+    ALTER TABLE dbo.Customers ADD createdBy INT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = N''FK_Customers_CreatedBy'' AND parent_object_id = OBJECT_ID(N''dbo.Customers''))
+    ALTER TABLE dbo.Customers WITH CHECK ADD CONSTRAINT FK_Customers_CreatedBy FOREIGN KEY (createdBy) REFERENCES dbo.Users(id);
 
 IF OBJECT_ID(N''dbo.CustomerContacts'', N''U'') IS NULL
 BEGIN

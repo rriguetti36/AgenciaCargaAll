@@ -3,7 +3,7 @@ const CustomerService = require('../services/CustomerService');
 class CustomerController {
   static async getAll(req, res, next) {
     try {
-      res.json(await CustomerService.getAll());
+      res.json(await CustomerService.getAll(req.user));
     } catch (err) {
       next(err);
     }
@@ -11,7 +11,7 @@ class CustomerController {
 
   static async getById(req, res, next) {
     try {
-      res.json(await CustomerService.getById(parseInt(req.params.id, 10)));
+      res.json(await CustomerService.getById(parseInt(req.params.id, 10), req.user));
     } catch (err) {
       next(err);
     }
@@ -19,7 +19,7 @@ class CustomerController {
 
   static async create(req, res, next) {
     try {
-      res.status(201).json(await CustomerService.create(req.body));
+      res.status(201).json(await CustomerService.create(req.body, req.user));
     } catch (err) {
       next(err);
     }
@@ -27,7 +27,7 @@ class CustomerController {
 
   static async update(req, res, next) {
     try {
-      res.json(await CustomerService.update(parseInt(req.params.id, 10), req.body));
+      res.json(await CustomerService.update(parseInt(req.params.id, 10), req.body, req.user));
     } catch (err) {
       next(err);
     }
@@ -35,7 +35,7 @@ class CustomerController {
 
   static async createContact(req, res, next) {
     try {
-      res.status(201).json(await CustomerService.createContact(parseInt(req.params.id, 10), req.body));
+      res.status(201).json(await CustomerService.createContact(parseInt(req.params.id, 10), req.body, req.user));
     } catch (err) {
       next(err);
     }

@@ -1,9 +1,17 @@
 const { poolPromise, sql } = require('../config/db');
 
 class CustomerModel {
-  static async getAll() {
+  static canSeeAll(user) {
+    return user?.role === 'admin';
+  }
+
+  static async getAll(user = null) {
     const pool = await poolPromise;
-    const result = await pool.request().query(`
+    const canSeeAll = this.canSeeAll(user) ? 1 : 0;
+    const result = await pool.request()
+      .input('canSeeAll', sql.Bit, canSeeAll)
+      .input('createdBy', sql.Int, user?.id || null)
+      .query(`
       SELECT
         c.id,
         c.companyName,
@@ -18,25 +26,38 @@ class CustomerModel {
         c.creditDays,
         c.creditNotes,
         c.estado,
+        c.createdBy,
+        creator.name AS createdByName,
         c.createdAt,
         c.updatedAt,
         COUNT(cc.id) AS contactsCount
       FROM dbo.Customers AS c
       LEFT JOIN dbo.CustomerContacts AS cc ON cc.customerId = c.id
+      LEFT JOIN dbo.Users AS creator ON creator.id = c.createdBy
+      WHERE (@canSeeAll = 1 OR c.createdBy = @createdBy OR c.createdBy IS NULL)
       GROUP BY c.id, c.companyName, c.tradeName, c.taxId, c.fiscalAddress, c.email, c.phone,
                c.creditEnabled, c.creditLimit, c.creditCurrency, c.creditDays, c.creditNotes,
-               c.estado, c.createdAt, c.updatedAt
+               c.estado, c.createdBy, creator.name, c.createdAt, c.updatedAt
       ORDER BY c.createdAt DESC
     `);
     return result.recordset;
   }
 
-  static async getById(id) {
+  static async getById(id, user = null) {
     const pool = await poolPromise;
+    const canSeeAll = this.canSeeAll(user) ? 1 : 0;
     const customerResult = await pool
       .request()
       .input('id', sql.Int, id)
-      .query('SELECT * FROM dbo.Customers WHERE id = @id');
+      .input('canSeeAll', sql.Bit, canSeeAll)
+      .input('createdBy', sql.Int, user?.id || null)
+      .query(`
+        SELECT c.*, creator.name AS createdByName
+        FROM dbo.Customers AS c
+        LEFT JOIN dbo.Users AS creator ON creator.id = c.createdBy
+        WHERE c.id = @id
+          AND (@canSeeAll = 1 OR c.createdBy = @createdBy OR c.createdBy IS NULL)
+      `);
 
     const customer = customerResult.recordset[0];
     if (!customer) return null;
@@ -65,10 +86,11 @@ class CustomerModel {
       .input('creditDays', sql.Int, data.creditDays ?? 0)
       .input('creditNotes', sql.NVarChar(500), data.creditNotes || null)
       .input('estado', sql.Bit, data.estado ?? 1)
+      .input('createdBy', sql.Int, data.createdBy || null)
       .query(`
-        INSERT INTO dbo.Customers (companyName, tradeName, taxId, fiscalAddress, email, phone, creditEnabled, creditLimit, creditCurrency, creditDays, creditNotes, estado)
+        INSERT INTO dbo.Customers (companyName, tradeName, taxId, fiscalAddress, email, phone, creditEnabled, creditLimit, creditCurrency, creditDays, creditNotes, estado, createdBy)
         OUTPUT INSERTED.*
-        VALUES (@companyName, @tradeName, @taxId, @fiscalAddress, @email, @phone, @creditEnabled, @creditLimit, @creditCurrency, @creditDays, @creditNotes, @estado)
+        VALUES (@companyName, @tradeName, @taxId, @fiscalAddress, @email, @phone, @creditEnabled, @creditLimit, @creditCurrency, @creditDays, @creditNotes, @estado, @createdBy)
       `);
     return result.recordset[0];
   }
@@ -90,6 +112,7 @@ class CustomerModel {
       .input('creditDays', sql.Int, data.creditDays ?? 0)
       .input('creditNotes', sql.NVarChar(500), data.creditNotes || null)
       .input('estado', sql.Bit, data.estado ?? 1)
+      .input('createdBy', sql.Int, data.createdBy || null)
       .query(`
         UPDATE dbo.Customers
         SET companyName = @companyName,
@@ -103,7 +126,8 @@ class CustomerModel {
             creditCurrency = @creditCurrency,
             creditDays = @creditDays,
             creditNotes = @creditNotes,
-            estado = @estado
+            estado = @estado,
+            createdBy = @createdBy
         WHERE id = @id;
 
         SELECT * FROM dbo.Customers WHERE id = @id;

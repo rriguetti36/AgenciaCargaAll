@@ -41,22 +41,33 @@ const emptyForm = {
   creditDays: 0,
   creditNotes: '',
   estado: 1,
+  createdBy: '',
 }
 
 export default function Customers() {
   const [customers, setCustomers] = useState([])
+  const [users, setUsers] = useState([])
   const [form, setForm] = useState(emptyForm)
   const [editingCustomerId, setEditingCustomerId] = useState(null)
   const [loading, setLoading] = useState(false)
   const toast = useToast()
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+  const isAdmin = currentUser.role === 'admin'
+  const advisorOptions = users.filter((user) => ['asesor', 'user', 'customer_service', 'admin'].includes(user.role))
 
   const loadCustomers = async () => {
     const res = await api.get('/customers')
     setCustomers(res.data)
   }
 
+  const loadUsers = async () => {
+    if (!isAdmin) return
+    const res = await api.get('/users')
+    setUsers(res.data)
+  }
+
   useEffect(() => {
-    loadCustomers().catch((err) => toast({ title: 'Error', description: err.message, status: 'error' }))
+    Promise.all([loadCustomers(), loadUsers()]).catch((err) => toast({ title: 'Error', description: err.message, status: 'error' }))
   }, [])
 
   const handleChange = (e) => {
@@ -79,6 +90,7 @@ export default function Customers() {
       creditDays: Number(customer.creditDays || 0),
       creditNotes: customer.creditNotes || '',
       estado: customer.estado ? 1 : 0,
+      createdBy: customer.createdBy || '',
     })
   }
 
@@ -139,6 +151,17 @@ export default function Customers() {
                     <option value={0}>Inactivo</option>
                   </Select>
                 </FormControl>
+                {isAdmin && (
+                  <FormControl>
+                    <FormLabel>Asesor</FormLabel>
+                    <Select name="createdBy" value={form.createdBy} onChange={handleChange}>
+                      <option value="">Sin asignar</option>
+                      {advisorOptions.map((user) => (
+                        <option key={user.id} value={user.id}>{user.name} ({user.role})</option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
                 <FormControl>
                   <FormLabel>Email</FormLabel>
                   <Input name="email" type="email" value={form.email} onChange={handleChange} />
@@ -203,6 +226,7 @@ export default function Customers() {
               <Th>Tax ID</Th>
               <Th>Contacto</Th>
               <Th>Credito</Th>
+              {isAdmin && <Th>Asesor</Th>}
               <Th>Estado</Th>
               <Th>Contactos</Th>
               <Th>Accion</Th>
@@ -226,6 +250,7 @@ export default function Customers() {
                     {customer.creditCurrency || 'USD'} {Number(customer.creditLimit || 0).toFixed(2)} | {Number(customer.creditDays || 0)} dias
                   </Text>
                 </Td>
+                {isAdmin && <Td>{customer.createdByName || 'Sin asignar'}</Td>}
                 <Td>
                   <Badge colorScheme={customer.estado ? 'green' : 'gray'}>
                     {customer.estado ? 'Activo' : 'Inactivo'}

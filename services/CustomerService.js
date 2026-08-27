@@ -1,12 +1,21 @@
 const CustomerModel = require('../models/CustomerModel');
 
 class CustomerService {
-  static async getAll() {
-    return CustomerModel.getAll();
+  static resolveCreatedBy(data, user, existingCustomer = null) {
+    if (user?.role === 'admin') {
+      return data.createdBy === '' || data.createdBy === undefined
+        ? existingCustomer?.createdBy || user?.id || null
+        : Number(data.createdBy || 0) || null;
+    }
+    return existingCustomer?.createdBy || user?.id || null;
   }
 
-  static async getById(id) {
-    const customer = await CustomerModel.getById(id);
+  static async getAll(user) {
+    return CustomerModel.getAll(user);
+  }
+
+  static async getById(id, user) {
+    const customer = await CustomerModel.getById(id, user);
     if (!customer) {
       const error = new Error('Cliente no encontrado');
       error.status = 404;
@@ -30,27 +39,33 @@ class CustomerService {
     };
   }
 
-  static async create(data) {
+  static async create(data, user) {
     if (!data.companyName) {
       const error = new Error('companyName es obligatorio');
       error.status = 400;
       throw error;
     }
-    return CustomerModel.create(this.normalize(data));
+    return CustomerModel.create({
+      ...this.normalize(data),
+      createdBy: this.resolveCreatedBy(data, user),
+    });
   }
 
-  static async update(id, data) {
-    await this.getById(id);
+  static async update(id, data, user) {
+    const existingCustomer = await this.getById(id, user);
     if (!data.companyName) {
       const error = new Error('companyName es obligatorio');
       error.status = 400;
       throw error;
     }
-    return CustomerModel.update(id, this.normalize(data));
+    return CustomerModel.update(id, {
+      ...this.normalize(data),
+      createdBy: this.resolveCreatedBy(data, user, existingCustomer),
+    });
   }
 
-  static async createContact(customerId, data) {
-    await this.getById(customerId);
+  static async createContact(customerId, data, user) {
+    await this.getById(customerId, user);
     if (!data.name) {
       const error = new Error('El nombre del contacto es obligatorio');
       error.status = 400;

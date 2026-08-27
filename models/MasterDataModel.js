@@ -83,6 +83,11 @@ const tableMap = {
     fields: ['code', 'name', 'estado'],
     select: 'SELECT id, code, name, estado FROM dbo.MeasurementUnits ORDER BY code',
   },
+  locations: {
+    table: 'dbo.LocationDistricts',
+    fields: ['department', 'province', 'district', 'estado'],
+    select: 'SELECT id, department, province, district, estado FROM dbo.LocationDistricts ORDER BY department, province, district',
+  },
 };
 
 function getConfig(type) {
@@ -127,6 +132,116 @@ class MasterDataModel {
       VALUES (${values})
     `);
     return result.recordset[0];
+  }
+
+  static async getCompanyConfig() {
+    const pool = await poolPromise;
+    const result = await pool.request().query(`
+      SELECT TOP 1 *
+      FROM dbo.CompanyConfiguration
+      WHERE id = 1
+    `);
+    const config = result.recordset[0] || null;
+    if (!config) return null;
+
+    const accounts = await pool.request().query(`
+      SELECT id, bankName, accountNumber, cci, estado, sortOrder
+      FROM dbo.CompanyBankAccounts
+      WHERE companyConfigId = 1
+      ORDER BY sortOrder, id
+    `);
+
+    return {
+      ...config,
+      bankAccounts: accounts.recordset,
+    };
+  }
+
+  static async updateCompanyConfig(data) {
+    const pool = await poolPromise;
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      const request = new sql.Request(transaction)
+      .input('id', sql.Int, 1)
+      .input('companyName', sql.NVarChar(150), data.companyName || null)
+      .input('businessName', sql.NVarChar(180), data.businessName || null)
+      .input('legalRepresentative', sql.NVarChar(150), data.legalRepresentative || null)
+      .input('ruc', sql.NVarChar(20), data.ruc || null)
+      .input('address', sql.NVarChar(250), data.address || null)
+      .input('department', sql.NVarChar(100), data.department || null)
+      .input('province', sql.NVarChar(100), data.province || null)
+      .input('district', sql.NVarChar(100), data.district || null)
+      .input('facebookUrl', sql.NVarChar(250), data.facebookUrl || null)
+      .input('instagramUrl', sql.NVarChar(250), data.instagramUrl || null)
+      .input('websiteUrl', sql.NVarChar(250), data.websiteUrl || null)
+      .input('logoPath', sql.NVarChar(250), data.logoPath || null)
+      .input('showIncludesInPdf', sql.Bit, data.showIncludesInPdf ?? 1)
+      .input('showExcludesInPdf', sql.Bit, data.showExcludesInPdf ?? 1)
+      .input('showDocumentsInPdf', sql.Bit, data.showDocumentsInPdf ?? 1)
+      .input('showFooterTextInPdf', sql.Bit, data.showFooterTextInPdf ?? 1)
+      .input('showBankAccountsInPdf', sql.Bit, data.showBankAccountsInPdf ?? 1)
+      .input('defaultIncludesText', sql.NVarChar(sql.MAX), data.defaultIncludesText || null)
+      .input('defaultExcludesText', sql.NVarChar(sql.MAX), data.defaultExcludesText || null)
+      .input('defaultDocumentsText', sql.NVarChar(sql.MAX), data.defaultDocumentsText || null)
+      .input('footerText', sql.NVarChar(sql.MAX), data.footerText || null);
+
+      await request.query(`
+      UPDATE dbo.CompanyConfiguration
+      SET companyName = @companyName,
+          businessName = @businessName,
+          legalRepresentative = @legalRepresentative,
+          ruc = @ruc,
+          address = @address,
+          department = @department,
+          province = @province,
+          district = @district,
+          facebookUrl = @facebookUrl,
+          instagramUrl = @instagramUrl,
+          websiteUrl = @websiteUrl,
+          logoPath = @logoPath,
+          showIncludesInPdf = @showIncludesInPdf,
+          showExcludesInPdf = @showExcludesInPdf,
+          showDocumentsInPdf = @showDocumentsInPdf,
+          showFooterTextInPdf = @showFooterTextInPdf,
+          showBankAccountsInPdf = @showBankAccountsInPdf,
+          defaultIncludesText = @defaultIncludesText,
+          defaultExcludesText = @defaultExcludesText,
+          defaultDocumentsText = @defaultDocumentsText,
+          footerText = @footerText,
+          updatedAt = SYSUTCDATETIME()
+      WHERE id = @id;
+    `);
+
+      await new sql.Request(transaction)
+        .input('companyConfigId', sql.Int, 1)
+        .query('DELETE FROM dbo.CompanyBankAccounts WHERE companyConfigId = @companyConfigId;');
+
+      const bankAccounts = Array.isArray(data.bankAccounts) ? data.bankAccounts : [];
+      for (let index = 0; index < bankAccounts.length; index++) {
+        const account = bankAccounts[index] || {};
+        if (!account.bankName && !account.accountNumber && !account.cci) continue;
+        await new sql.Request(transaction)
+          .input('companyConfigId', sql.Int, 1)
+          .input('bankName', sql.NVarChar(120), account.bankName || null)
+          .input('accountNumber', sql.NVarChar(80), account.accountNumber || null)
+          .input('cci', sql.NVarChar(80), account.cci || null)
+          .input('estado', sql.Bit, account.estado ?? 1)
+          .input('sortOrder', sql.Int, index + 1)
+          .query(`
+            INSERT INTO dbo.CompanyBankAccounts (companyConfigId, bankName, accountNumber, cci, estado, sortOrder)
+            VALUES (@companyConfigId, @bankName, @accountNumber, @cci, @estado, @sortOrder);
+          `);
+      }
+
+      await transaction.commit();
+
+      return MasterDataModel.getCompanyConfig();
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 dotenv.config();
 const { migrateAddRoleColumn } = require('./migrations/addRoleColumn');
 const userRoutes = require('./routes/userRoutes');
@@ -22,7 +23,8 @@ const allowedOrigin = process.env.CLIENT_ORIGIN
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 const DEFAULT_PORT = parseInt(process.env.PORT, 10) || 3001;
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+app.use('/imagenes', express.static(path.join(__dirname, 'public', 'imagenes')));
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);

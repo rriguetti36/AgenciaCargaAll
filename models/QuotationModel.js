@@ -118,6 +118,7 @@ class QuotationModel {
           dp.name AS destinationPortName,
           creator.name AS createdByName,
           creator.phone AS createdByPhone,
+          creator.email AS createdByEmail,
           pricing.name AS pricingUserName,
           quantityUnit.code AS quantityUnitCode,
           quantityUnit.name AS quantityUnitName,

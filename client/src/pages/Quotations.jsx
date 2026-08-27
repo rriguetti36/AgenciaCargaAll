@@ -112,15 +112,23 @@ const formatMeasure = (value, unitCode, decimals = 2) => {
 const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
 const splitLines = (value) => String(value || '').split('\n').map((line) => line.trim()).filter(Boolean)
 const normalizeText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-const loadPdfLogo = async () => {
+const assetUrl = (path) => {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  const apiBase = api.defaults.baseURL || 'http://localhost:3001/api'
+  const assetBase = apiBase.replace(/\/api\/?$/, '')
+  return `${assetBase}${path.startsWith('/') ? path : `/${path}`}`
+}
+const loadPdfLogo = async (preferredPath) => {
   const logoPaths = [
+    ...(preferredPath ? [{ path: preferredPath, format: preferredPath.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG' }] : []),
     { path: '/imagenes/logo.png', format: 'PNG' },
     { path: '/imagenes/logo.jpg', format: 'JPEG' },
     { path: '/imagenes/logo.jpeg', format: 'JPEG' },
   ]
   for (const { path, format } of logoPaths) {
     try {
-      const response = await fetch(path, { cache: 'no-store' })
+      const response = await fetch(assetUrl(path), { cache: 'no-store' })
       if (!response.ok) continue
       const contentType = response.headers.get('content-type') || ''
       if (!contentType.toLowerCase().startsWith('image/')) continue
@@ -722,7 +730,11 @@ export default function Quotations() {
   const openQuotationPdf = async (quotationId = editingQuotationId) => {
     if (!quotationId) return
     try {
-      const { data } = await api.get(`/quotations/${quotationId}`)
+      const [{ data }, configRes] = await Promise.all([
+        api.get(`/quotations/${quotationId}`),
+        api.get('/master-data/company-config').catch(() => ({ data: {} })),
+      ])
+      const companyConfig = configRes.data || {}
       const charges = data.charges || []
       const lineSaleSubtotal = (charge) => Number(charge.saleAmount || 0) * Number(charge.quantity || 1)
       const lineIgv = (charge) => normalizeChargeSection(charge.section || charge.chargeType) === 'gastos_destino'
@@ -740,6 +752,12 @@ export default function Quotations() {
       }
       const originLabel = formatCountryPort(data.originCountryName, data.originPortName, data.origin)
       const destinationLabel = formatCountryPort(data.destinationCountryName, data.destinationPortName, data.destination)
+      const companyAddress = [
+        companyConfig.address,
+        companyConfig.district,
+        companyConfig.province,
+        companyConfig.department,
+      ].filter(Boolean).join(', ')
       const cargoSummary = [
         `Cantidad: ${formatMeasure(data.quantity, data.quantityUnitCode)}`,
         `Peso: ${formatMeasure(data.grossWeight, data.weightUnitCode)}`,
@@ -749,7 +767,7 @@ export default function Quotations() {
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
       const margin = 42
-      const logo = await loadPdfLogo()
+      const logo = await loadPdfLogo(companyConfig.logoPath)
       let y = 42
 
       const checkPage = (needed = 40) => {
@@ -802,9 +820,10 @@ export default function Quotations() {
       }
       const addThreeColumnLists = (columns) => {
         checkPage(70)
+        if (!columns.length) return
         const gap = 12
-        const colW = (pageWidth - margin * 2 - gap * 2) / 3
-        const starts = [margin, margin + colW + gap, margin + (colW + gap) * 2]
+        const colW = (pageWidth - margin * 2 - gap * (columns.length - 1)) / columns.length
+        const starts = columns.map((_, index) => margin + (colW + gap) * index)
         const titleHeight = 16
         const padding = 1
         const columnLines = columns.map((column) => (
@@ -814,6 +833,28 @@ export default function Quotations() {
           titleHeight + linesGroup.reduce((sum, lines) => sum + (lines.length * 9) + 4, 0) + 6
         ))
         const boxHeight = Math.max(46, ...columnHeights)
+        if (boxHeight > pageHeight - margin * 2) {
+          columns.forEach((column) => {
+            checkPage(30)
+            doc.setFont('helvetica', 'bold')
+            doc.setFontSize(8)
+            doc.setTextColor(15, 118, 110)
+            doc.text(column.title, margin, y)
+            y += 12
+            const items = column.items.length ? column.items : ['-']
+            items.forEach((item) => {
+              const lines = doc.splitTextToSize(`- ${cleanText(item) || '-'}`, pageWidth - margin * 2)
+              checkPage(lines.length * 9 + 4)
+              doc.setFont('helvetica', 'normal')
+              doc.setFontSize(7)
+              doc.setTextColor(31, 41, 55)
+              doc.text(lines, margin, y)
+              y += lines.length * 9 + 4
+            })
+            y += 4
+          })
+          return
+        }
         checkPage(boxHeight + 4)
         columns.forEach((column, index) => {
           doc.setFont('helvetica', 'bold')
@@ -833,6 +874,124 @@ export default function Quotations() {
         })
         y += boxHeight + 8
       }
+      const addFooterText = (text) => {
+        const usableWidth = pageWidth - margin * 2
+        const replaceFooterTokens = (value) => {
+          const tokens = {
+            CIA: companyConfig.companyName || companyConfig.businessName || '',
+            NOMBRE_CIA: companyConfig.companyName || companyConfig.businessName || '',
+            RAZON_SOCIAL: companyConfig.businessName || companyConfig.companyName || '',
+            EMPRESA: data.customerName || '',
+            CLIENTE: data.customerName || '',
+          }
+          return String(value || '').replace(/\[([A-Z_]+)\]/gi, (match, token) => tokens[token.toUpperCase()] || match)
+        }
+        const drawJustifiedLine = (line, isLastLine) => {
+          const words = cleanText(line).split(/\s+/).filter(Boolean)
+          if (isLastLine || words.length <= 1) {
+            doc.text(words.join(' '), margin, y)
+            return
+          }
+          const wordsWidth = words.reduce((sum, word) => sum + doc.getTextWidth(word), 0)
+          const spaceWidth = (usableWidth - wordsWidth) / (words.length - 1)
+          if (spaceWidth <= 0 || spaceWidth > 12) {
+            doc.text(words.join(' '), margin, y)
+            return
+          }
+          let x = margin
+          words.forEach((word, index) => {
+            doc.text(word, x, y)
+            x += doc.getTextWidth(word) + (index === words.length - 1 ? 0 : spaceWidth)
+          })
+        }
+        const paragraphs = replaceFooterTokens(text)
+          .replace(/\r\n/g, '\n')
+          .split(/\n\s*\n/)
+          .map((paragraph) => cleanText(paragraph.replace(/\n+/g, ' ')))
+          .filter(Boolean)
+        if (!paragraphs.length) return
+        checkPage(32)
+        y += 8
+        doc.setDrawColor(209, 213, 219)
+        doc.line(margin, y, pageWidth - margin, y)
+        y += 14
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(31, 41, 55)
+        paragraphs.forEach((paragraph) => {
+          const wrapped = doc.splitTextToSize(paragraph, usableWidth)
+          checkPage(wrapped.length * 10 + 4)
+          wrapped.forEach((line, index) => {
+            drawJustifiedLine(line, index === wrapped.length - 1)
+            y += 10
+          })
+          y += 4
+        })
+      }
+      const addBankAccounts = (accounts) => {
+        const activeAccounts = (accounts || []).filter((account) => account.estado !== false && (account.bankName || account.accountNumber || account.cci))
+        if (!activeAccounts.length) return
+        addSectionTitle('Cuentas bancarias')
+        checkPage(20)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(7)
+        doc.setTextColor(75, 85, 99)
+        doc.setFillColor(243, 244, 246)
+        doc.rect(margin, y, pageWidth - margin * 2, 18, 'F')
+        doc.text('Banco', margin + 6, y + 12)
+        doc.text('Numero cta', margin + 190, y + 12)
+        doc.text('CCI', margin + 350, y + 12)
+        y += 18
+        activeAccounts.forEach((account) => {
+          const bankLines = doc.splitTextToSize(cleanText(account.bankName) || '-', 170)
+          const accountLines = doc.splitTextToSize(cleanText(account.accountNumber) || '-', 140)
+          const cciLines = doc.splitTextToSize(cleanText(account.cci) || '-', pageWidth - margin - (margin + 350) - 6)
+          const rowHeight = Math.max(bankLines.length, accountLines.length, cciLines.length) * 9 + 7
+          checkPage(rowHeight)
+          doc.setDrawColor(229, 231, 235)
+          doc.line(margin, y, pageWidth - margin, y)
+          doc.setFont('helvetica', 'normal')
+          doc.setFontSize(7)
+          doc.setTextColor(31, 41, 55)
+          doc.text(bankLines, margin + 6, y + 11)
+          doc.text(accountLines, margin + 190, y + 11)
+          doc.text(cciLines, margin + 350, y + 11)
+          y += rowHeight
+        })
+      }
+      const addAdvisorInfo = () => {
+        checkPage(70)
+        y += 10
+        const gap = 14
+        const colW = (pageWidth - margin * 2 - gap * 2) / 3
+        const advisorX = margin + (colW + gap) * 2
+        let advisorY = y + 18
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8)
+        doc.setTextColor(75, 85, 99)
+        doc.text('Atentamente,', margin, y)
+        const lines = [
+          `Asesor: ${data.createdByName || '-'}`,
+          `Telefono: ${data.createdByPhone || '-'}`,
+          `Correo: ${data.createdByEmail || '-'}`,
+          `Direccion: ${companyAddress || '-'}`,
+        ]
+        const wrappedLines = lines.map((line) => doc.splitTextToSize(line, colW))
+        const blockHeight = wrappedLines.reduce((sum, wrapped) => sum + wrapped.length * 10 + 3, 0) - 3
+        doc.setDrawColor(15, 118, 110)
+        doc.setLineWidth(1.4)
+        doc.line(advisorX - 10, advisorY - 8, advisorX - 10, advisorY + blockHeight - 2)
+        doc.setDrawColor(153, 246, 228)
+        doc.setLineWidth(1.4)
+        doc.line(advisorX - 6, advisorY - 8, advisorX - 6, advisorY + blockHeight - 2)
+        doc.setLineWidth(0.2)
+        doc.setTextColor(75, 85, 99)
+        wrappedLines.forEach((wrapped) => {
+          doc.text(wrapped, advisorX, advisorY)
+          advisorY += wrapped.length * 10 + 3
+        })
+        y = Math.max(y + 13, advisorY)
+      }
 
       doc.setFillColor(15, 118, 110)
       doc.rect(0, 0, pageWidth, 10, 'F')
@@ -851,12 +1010,10 @@ export default function Quotations() {
       doc.setTextColor(31, 41, 55)
       doc.text(data.quotationNumber || '', pageWidth - margin, y, { align: 'right' })
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(9)
+      doc.setFontSize(8)
       doc.setTextColor(107, 114, 128)
       doc.text(`Fecha: ${new Date(data.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin, y + 14, { align: 'right' })
-      doc.text(`Asesor: ${data.createdByName || '-'}`, pageWidth - margin, y + 28, { align: 'right' })
-      doc.text(`Telefono: ${data.createdByPhone || '-'}`, pageWidth - margin, y + 42, { align: 'right' })
-      y += 62
+      y += 58
       doc.setDrawColor(15, 118, 110)
       doc.line(margin, y, pageWidth - margin, y)
       y += 18
@@ -934,19 +1091,30 @@ export default function Quotations() {
       doc.text(`Total cotizado: ${data.currency || 'USD'} ${totalSale.toFixed(2)}`, pageWidth - margin, y + 16, { align: 'right' })
       y += 36
 
-      addSectionTitle('Condiciones')
-      addThreeColumnLists([
-        { title: 'Incluye', items: splitLines(data.includesText).length ? splitLines(data.includesText) : ['-'] },
-        { title: 'No incluye', items: splitLines(data.excludesText).length ? splitLines(data.excludesText) : ['-'] },
-        { title: 'Documentos requeridos', items: splitLines(data.requiredDocumentsText).length ? splitLines(data.requiredDocumentsText) : ['-'] },
-      ])
-
-      checkPage(40)
-      y += 12
-      doc.setDrawColor(229, 231, 235)
-      doc.line(margin, y, pageWidth - margin, y)
-      y += 16
-      addText('Esta cotizacion esta sujeta a disponibilidad de espacios, vigencia de tarifas y condiciones operativas al momento de la confirmacion.', margin, { size: 8, color: [107, 114, 128] })
+      const footerColumns = []
+      if (companyConfig.showIncludesInPdf !== false) {
+        const items = splitLines(data.includesText)
+        footerColumns.push({ title: 'Incluye', items: items.length ? items : ['-'] })
+      }
+      if (companyConfig.showExcludesInPdf !== false) {
+        const items = splitLines(data.excludesText)
+        footerColumns.push({ title: 'No incluye', items: items.length ? items : ['-'] })
+      }
+      if (companyConfig.showDocumentsInPdf !== false) {
+        const items = splitLines(data.requiredDocumentsText)
+        footerColumns.push({ title: 'Documentos requeridos', items: items.length ? items : ['-'] })
+      }
+      if (footerColumns.length) {
+        addSectionTitle('Condiciones')
+        addThreeColumnLists(footerColumns)
+      }
+      if (companyConfig.showBankAccountsInPdf !== false) {
+        addBankAccounts(companyConfig.bankAccounts)
+      }
+      if (companyConfig.showFooterTextInPdf !== false) {
+        addFooterText(companyConfig.footerText)
+      }
+      addAdvisorInfo()
 
       doc.save(`${data.quotationNumber || 'cotizacion'}.pdf`)
     } catch (err) {

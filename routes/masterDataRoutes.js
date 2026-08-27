@@ -6,6 +6,9 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+router.get('/company-config', MasterDataController.getCompanyConfig);
+router.put('/company-config', MasterDataController.updateCompanyConfig);
+router.post('/company-config/logo', MasterDataController.uploadCompanyLogo);
 router.get('/:type', MasterDataController.list);
 router.post('/:type', MasterDataController.create);
 

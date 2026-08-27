@@ -23,6 +23,7 @@ import {
   Select,
   Stack,
   Table,
+  TableContainer,
   Tbody,
   Td,
   Text,
@@ -788,13 +789,15 @@ export default function Quotations() {
         y += lines.length * lineHeight
       }
       const addSectionTitle = (title) => {
-        checkPage(34)
-        y += 10
+        const topGap = 7
+        const bottomGap = title === 'Informacion del cliente y servicio' ? 18 : 10
+        checkPage(topGap + bottomGap + 9)
+        y += topGap
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(11)
+        doc.setFontSize(9)
         doc.setTextColor(15, 118, 110)
         doc.text(title.toUpperCase(), margin, y)
-        y += 14
+        y += bottomGap
       }
       const addInlineInfoRow = (items, options = {}) => {
         checkPage(18)
@@ -1042,54 +1045,57 @@ export default function Quotations() {
 
       addSectionTitle('Detalle cotizado')
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(8)
+      doc.setFontSize(7)
       doc.setTextColor(75, 85, 99)
       doc.setFillColor(243, 244, 246)
-      doc.rect(margin, y, pageWidth - margin * 2, 22, 'F')
-      doc.text('Concepto', margin + 8, y + 14)
-      doc.text('Cant.', pageWidth - 220, y + 14, { align: 'right' })
-      doc.text('Moneda', pageWidth - 170, y + 14)
-      doc.text('Venta', pageWidth - margin - 8, y + 14, { align: 'right' })
-      y += 22
+      doc.rect(margin, y, pageWidth - margin * 2, 18, 'F')
+      doc.text('Concepto', margin + 8, y + 12)
+      doc.text('Cant.', pageWidth - 220, y + 12, { align: 'right' })
+      doc.text('Moneda', pageWidth - 170, y + 12)
+      doc.text('Venta', pageWidth - margin - 8, y + 12, { align: 'right' })
+      y += 18
 
       sections.forEach(([section, label]) => {
         const sectionCharges = charges.filter((charge) => normalizeChargeSection(charge.section || charge.chargeType) === section)
         if (!sectionCharges.length) return
-        checkPage(24)
+        checkPage(20)
         doc.setFillColor(204, 251, 241)
-        doc.rect(margin, y, pageWidth - margin * 2, 20, 'F')
+        doc.rect(margin, y, pageWidth - margin * 2, 17, 'F')
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(8)
+        doc.setFontSize(7)
         doc.setTextColor(15, 118, 110)
-        doc.text(label, margin + 8, y + 13)
-        y += 20
+        doc.text(label, margin + 8, y + 11)
+        y += 17
         sectionCharges.forEach((charge) => {
-          checkPage(22)
+          const descriptionLines = doc.splitTextToSize(cleanText(charge.description || '-'), pageWidth - 270)
+          const rowHeight = Math.max(17, descriptionLines.length * 8 + 7)
+          checkPage(rowHeight)
           doc.setDrawColor(229, 231, 235)
           doc.line(margin, y, pageWidth - margin, y)
           doc.setFont('helvetica', 'normal')
-          doc.setFontSize(8)
+          doc.setFontSize(7)
           doc.setTextColor(31, 41, 55)
-          doc.text(doc.splitTextToSize(cleanText(charge.description || '-'), pageWidth - 270), margin + 8, y + 14)
-          doc.text(Number(charge.quantity || 1).toFixed(3), pageWidth - 220, y + 14, { align: 'right' })
-          doc.text(charge.currency || data.currency || 'USD', pageWidth - 170, y + 14)
-          doc.text(lineTotal(charge).toFixed(2), pageWidth - margin - 8, y + 14, { align: 'right' })
-          y += 22
+          doc.text(descriptionLines, margin + 8, y + 12)
+          doc.text(Number(charge.quantity || 1).toFixed(3), pageWidth - 220, y + 12, { align: 'right' })
+          doc.text(charge.currency || data.currency || 'USD', pageWidth - 170, y + 12)
+          doc.text(lineTotal(charge).toFixed(2), pageWidth - margin - 8, y + 12, { align: 'right' })
+          y += rowHeight
         })
         const subtotal = sectionCharges.reduce((sum, charge) => sum + lineTotal(charge), 0)
-        checkPage(22)
+        checkPage(18)
         doc.setFont('helvetica', 'bold')
-        doc.text('Subtotal', pageWidth - 180, y + 14)
-        doc.text(`${data.currency || 'USD'} ${subtotal.toFixed(2)}`, pageWidth - margin - 8, y + 14, { align: 'right' })
-        y += 24
+        doc.setFontSize(7)
+        doc.text('Subtotal', pageWidth - 180, y + 12)
+        doc.text(`${data.currency || 'USD'} ${subtotal.toFixed(2)}`, pageWidth - margin - 8, y + 12, { align: 'right' })
+        y += 19
       })
 
-      checkPage(36)
+      checkPage(28)
       doc.setFont('helvetica', 'bold')
-      doc.setFontSize(14)
+      doc.setFontSize(11)
       doc.setTextColor(15, 118, 110)
-      doc.text(`Total cotizado: ${data.currency || 'USD'} ${totalSale.toFixed(2)}`, pageWidth - margin, y + 16, { align: 'right' })
-      y += 36
+      doc.text(`Total cotizado: ${data.currency || 'USD'} ${totalSale.toFixed(2)}`, pageWidth - margin, y + 14, { align: 'right' })
+      y += 28
 
       const footerColumns = []
       if (companyConfig.showIncludesInPdf !== false) {
@@ -1401,78 +1407,80 @@ export default function Quotations() {
                       </Flex>
                     </Box>
                   )}
-                  <Table size="sm">
-                    <Thead bg="gray.50">
-                      <Tr>
-                        <Th>Concepto</Th>
-                        <Th>Moneda</Th>
-                        <Th isNumeric>Cantidad</Th>
-                        <Th isNumeric>Costo</Th>
-                        <Th isNumeric>Costo final</Th>
-                        {section === 'gastos_destino' && <Th isNumeric>IGV</Th>}
-                        <Th isNumeric>Total</Th>
-                        <Th isNumeric>Utilidad</Th>
-                        <Th isNumeric>Margen</Th>
-                        <Th>Accion</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {charges.map((charge) => {
-                        const index = form.charges.indexOf(charge)
-                        const editable = canEditCharges && editingSection === section
-                        return (
-                          <Tr key={`${section}-${index}`}>
-                            <Td>
-                              {editable ? <Input value={charge.description} onChange={(e) => updateCharge(index, 'description', e.target.value)} /> : charge.description || '-'}
-                            </Td>
-                            <Td>
-                              {editable ? (
-                                <Select value={charge.currency || form.currency} onChange={(e) => updateCharge(index, 'currency', e.target.value)}>
-                                  {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
-                                </Select>
-                              ) : charge.currency}
-                            </Td>
-                            <Td isNumeric>
-                              {editable ? (
-                                <NumberInput value={charge.quantity ?? ''} min={0} step={0.001} onChange={(value) => updateCharge(index, 'quantity', value)}>
-                                  <NumberInputField textAlign="right" />
-                                </NumberInput>
-                              ) : Number(charge.quantity || 1).toFixed(3)}
-                            </Td>
-                            <Td isNumeric>
-                              {editable ? (
-                                <NumberInput value={charge.costAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'costAmount', value)}>
-                                  <NumberInputField textAlign="right" />
-                                </NumberInput>
-                              ) : Number(charge.costAmount || 0).toFixed(2)}
-                            </Td>
-                            <Td isNumeric>
-                              {editable ? (
-                                <NumberInput value={charge.saleAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'saleAmount', value)}>
-                                  <NumberInputField textAlign="right" />
-                                </NumberInput>
-                              ) : Number(charge.saleAmount || 0).toFixed(2)}
-                            </Td>
-                            {section === 'gastos_destino' && (
-                              <Td isNumeric>{chargeIgvAmount(charge).toFixed(2)}</Td>
-                            )}
-                            <Td isNumeric fontWeight="700">
-                              {chargeLineTotal(charge).toFixed(2)}
-                            </Td>
-                            <Td isNumeric color={chargeSaleSubtotal(charge) - chargeCostSubtotal(charge) >= 0 ? 'green.600' : 'red.600'} fontWeight="700">
-                              {(chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)).toFixed(2)}
-                            </Td>
-                            <Td isNumeric>
-                              {chargeSaleSubtotal(charge) > 0 ? (((chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)) / chargeSaleSubtotal(charge)) * 100).toFixed(2) : '0.00'}%
-                            </Td>
-                            <Td>
-                              {canEditCharges && <ActionButton size="xs" colorScheme="red" variant="outline" label="Eliminar item" icon={<DeleteIcon />} onClick={() => removeCharge(index)} />}
-                            </Td>
-                          </Tr>
-                        )
-                      })}
-                    </Tbody>
-                  </Table>
+                  <TableContainer overflowX="auto" w="100%" sx={{ WebkitOverflowScrolling: 'touch' }}>
+                    <Table size="sm" minW={{ base: '980px', lg: '100%' }}>
+                      <Thead bg="gray.50">
+                        <Tr>
+                          <Th>Concepto</Th>
+                          <Th>Moneda</Th>
+                          <Th isNumeric>Cantidad</Th>
+                          <Th isNumeric>Costo</Th>
+                          <Th isNumeric>Costo final</Th>
+                          {section === 'gastos_destino' && <Th isNumeric>IGV</Th>}
+                          <Th isNumeric>Total</Th>
+                          <Th isNumeric>Utilidad</Th>
+                          <Th isNumeric>Margen</Th>
+                          <Th>Accion</Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {charges.map((charge) => {
+                          const index = form.charges.indexOf(charge)
+                          const editable = canEditCharges && editingSection === section
+                          return (
+                            <Tr key={`${section}-${index}`}>
+                              <Td>
+                                {editable ? <Input value={charge.description} onChange={(e) => updateCharge(index, 'description', e.target.value)} /> : charge.description || '-'}
+                              </Td>
+                              <Td>
+                                {editable ? (
+                                  <Select value={charge.currency || form.currency} onChange={(e) => updateCharge(index, 'currency', e.target.value)}>
+                                    {currencyOptions.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                                  </Select>
+                                ) : charge.currency}
+                              </Td>
+                              <Td isNumeric>
+                                {editable ? (
+                                  <NumberInput value={charge.quantity ?? ''} min={0} step={0.001} onChange={(value) => updateCharge(index, 'quantity', value)}>
+                                    <NumberInputField textAlign="right" />
+                                  </NumberInput>
+                                ) : Number(charge.quantity || 1).toFixed(3)}
+                              </Td>
+                              <Td isNumeric>
+                                {editable ? (
+                                  <NumberInput value={charge.costAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'costAmount', value)}>
+                                    <NumberInputField textAlign="right" />
+                                  </NumberInput>
+                                ) : Number(charge.costAmount || 0).toFixed(2)}
+                              </Td>
+                              <Td isNumeric>
+                                {editable ? (
+                                  <NumberInput value={charge.saleAmount ?? ''} min={0} step={0.01} onChange={(value) => updateCharge(index, 'saleAmount', value)}>
+                                    <NumberInputField textAlign="right" />
+                                  </NumberInput>
+                                ) : Number(charge.saleAmount || 0).toFixed(2)}
+                              </Td>
+                              {section === 'gastos_destino' && (
+                                <Td isNumeric>{chargeIgvAmount(charge).toFixed(2)}</Td>
+                              )}
+                              <Td isNumeric fontWeight="700">
+                                {chargeLineTotal(charge).toFixed(2)}
+                              </Td>
+                              <Td isNumeric color={chargeSaleSubtotal(charge) - chargeCostSubtotal(charge) >= 0 ? 'green.600' : 'red.600'} fontWeight="700">
+                                {(chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)).toFixed(2)}
+                              </Td>
+                              <Td isNumeric>
+                                {chargeSaleSubtotal(charge) > 0 ? (((chargeSaleSubtotal(charge) - chargeCostSubtotal(charge)) / chargeSaleSubtotal(charge)) * 100).toFixed(2) : '0.00'}%
+                              </Td>
+                              <Td>
+                                {canEditCharges && <ActionButton size="xs" colorScheme="red" variant="outline" label="Eliminar item" icon={<DeleteIcon />} onClick={() => removeCharge(index)} />}
+                              </Td>
+                            </Tr>
+                          )
+                        })}
+                      </Tbody>
+                    </Table>
+                  </TableContainer>
                 </Box>
               )
             })}
@@ -1627,34 +1635,36 @@ export default function Quotations() {
                 Selecciona pais y puerto de {selectedTariffType || 'origen/destino'} para ver tarifas aplicables.
               </Text>
             ) : (
-              <Table size="sm">
-                <Thead bg="gray.50">
-                  <Tr>
-                    <Th>Concepto</Th>
-                    <Th>Moneda</Th>
-                    <Th isNumeric>Monto</Th>
-                    <Th>Accion</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {selectedTariffs.map((tariff) => (
-                    <Tr key={tariff.id}>
-                      <Td fontWeight="600">{tariff.concept}</Td>
-                      <Td><Badge>{tariff.currency}</Badge></Td>
-                      <Td isNumeric>{Number(tariff.amount || 0).toFixed(2)}</Td>
-                      <Td>
-                        <ActionButton
-                          size="xs"
-                          colorScheme="teal"
-                          label="Agregar item"
-                          icon={<AddIcon />}
-                          onClick={() => applyTariff(tariff)}
-                        />
-                      </Td>
+              <TableContainer overflowX="auto" w="100%" sx={{ WebkitOverflowScrolling: 'touch' }}>
+                <Table size="sm" minW={{ base: '560px', md: '100%' }}>
+                  <Thead bg="gray.50">
+                    <Tr>
+                      <Th>Concepto</Th>
+                      <Th>Moneda</Th>
+                      <Th isNumeric>Monto</Th>
+                      <Th>Accion</Th>
                     </Tr>
-                  ))}
-                </Tbody>
-              </Table>
+                  </Thead>
+                  <Tbody>
+                    {selectedTariffs.map((tariff) => (
+                      <Tr key={tariff.id}>
+                        <Td fontWeight="600">{tariff.concept}</Td>
+                        <Td><Badge>{tariff.currency}</Badge></Td>
+                        <Td isNumeric>{Number(tariff.amount || 0).toFixed(2)}</Td>
+                        <Td>
+                          <ActionButton
+                            size="xs"
+                            colorScheme="teal"
+                            label="Agregar item"
+                            icon={<AddIcon />}
+                            onClick={() => applyTariff(tariff)}
+                          />
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
             )}
           </ModalBody>
           <ModalFooter gap={2}>
